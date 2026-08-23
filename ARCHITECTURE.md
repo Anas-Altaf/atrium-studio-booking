@@ -42,11 +42,141 @@ method.
 
 ## 1. Entity relationship diagram
 
-*TBD — to be added once the schema is migrated.*
+Migrations in `db/migrations/`. The diagram is the schema, not a sketch beside it.
 
-## 2. Booking state machine diagram
+```mermaid
+erDiagram
+    VENUES ||--o{ ROOMS : has
+    VENUES ||--o{ EQUIPMENT_TYPES : owns
+    VENUES ||--o{ USERS : "scopes staff and admins"
+    VENUES ||--o{ REFUND_POLICY_VERSIONS : "publishes versions of"
+    VENUES ||--|| REFUND_POLICY_VERSIONS : "current_policy_version_id"
 
-*TBD — transition matrix is already fixed (section 3.4 below); the diagram follows.*
+    ROOMS ||--o{ BOOKINGS : "booked as an interval"
+    USERS ||--o{ BOOKINGS : places
+    REFUND_POLICY_VERSIONS ||--o{ BOOKINGS : "terms frozen at hold (A9)"
+
+    BOOKINGS ||--o{ BOOKING_LINE_ITEMS : "equipment reserved"
+    EQUIPMENT_TYPES ||--o{ BOOKING_LINE_ITEMS : "quantity over an interval"
+
+    BOOKINGS ||--o{ PAYMENTS : "at most one live (INV-3)"
+    PAYMENTS ||--o{ REFUNDS : "returns money against"
+    BOOKINGS ||--o{ REFUNDS : "at most one live (4C)"
+    BOOKINGS ||--o{ AUDIT_EVENTS : "append only, one per transition"
+
+    BOOKING_TRANSITIONS ||--o{ AUDIT_EVENTS : "matrix the trigger validates against"
+
+    WEBHOOK_EVENTS }o--|| PAYMENTS : "matched by charge_id"
+    UNMATCHED_WEBHOOKS }o..o| PAYMENTS : "arrived before the charge existed"
+```
+
+### The eight entities the brief names
+
+`VENUES`, `ROOMS`, `EQUIPMENT_TYPES`, `USERS`, `BOOKINGS`, `BOOKING_LINE_ITEMS`, `PAYMENTS`,
+`AUDIT_EVENTS` — all present, with the responsibilities described in the brief.
+
+### The five added, and why
+
+| Table | Why it exists |
+|---|---|
+| `REFUND_POLICY_VERSIONS` | Policy is data, and a change must not reach a booking already made. Append-only versions with the booking holding a pointer is how that guarantee becomes structural rather than remembered — §4B |
+| `REFUNDS` | A refund is not a payment with a negative sign. It has its own lifecycle, its own idempotency key, and its own retry state, and INV-5 requires it to be reconcilable independently |
+| `WEBHOOK_EVENTS` | Deduplication on `(charge_id, event_type)` needs somewhere to be unique. Also carries the retry state for the worker, since the handler only records and returns — §4 |
+| `UNMATCHED_WEBHOOKS` | 25% of deliveries arrive before the charge is recorded. That is an expected condition, so it needs a home other than an error log |
+| `BOOKING_TRANSITIONS` | The state machine as data rather than a `CASE` statement, so the matrix can be read, tested and diffed. The trigger validates against it — §3.5 |
+
+### Constraints worth reading as design, not plumbing
+
+| Where | What it prevents |
+|---|---|
+| `bookings.reserved_range` GENERATED | The 15-minute turnaround becomes geometry. No code path, including seeds, can bypass it |
+| `EXCLUDE USING gist` on `bookings` | INV-1, enforced by the index at write time rather than by a prior check |
+| `users.role_venue_agreement` | A venue-scoped role with no venue would scope to nothing and read everything; a platform admin with a venue would look scoped and not be. Both are INV-6 failures the database now refuses to store |
+| `one_live_charge_per_booking` | INV-3 at the database level, independent of what the application does |
+| `one_live_refund_per_booking` | Double-clicked cancel, second line of defence behind the state machine |
+| `half_hour_granularity`, `duration_bounds` | Operating rules held as data constraints rather than validation that a new endpoint might skip |
+| `REVOKE UPDATE, DELETE` (006) | Append-only for `audit_events`, immutability for policy versions — as privileges, not conventions |
+
+## 2. Booking state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> HELD : inventory reserved
+    DRAFT --> EXPIRED : abandoned
+
+    HELD --> HELD : checkout re-issues TTL (A1)
+    HELD --> PENDING_PAYMENT : charge submitted
+    HELD --> EXPIRED : TTL elapsed (reaper)
+    HELD --> CANCELLED : released by customer
+
+    PENDING_PAYMENT --> CONFIRMED : capture confirmed
+    PENDING_PAYMENT --> FAILED : charge declined
+    PENDING_PAYMENT --> EXPIRED : TTL elapsed while outcome unknown
+
+    CONFIRMED --> COMPLETED : end_at passed
+    CONFIRMED --> CANCELLED : cancelled by customer or staff
+
+    CANCELLED --> REFUNDED : refund captured back
+    EXPIRED --> REFUNDED : late capture returned (INV-4)
+
+    COMPLETED --> [*]
+    FAILED --> [*]
+    REFUNDED --> [*]
+```
+
+### Transition matrix
+
+This is the table the `BEFORE UPDATE` trigger of §3.5 enforces. Any pair not listed raises,
+and is mapped to `409`.
+
+| From | To | Trigger | Inventory | Money |
+|---|---|---|---|---|
+| `DRAFT` | `HELD` | hold created | reserved | — |
+| `DRAFT` | `EXPIRED` | abandoned before hold | — | — |
+| `HELD` | `HELD` | checkout reached — `expires_at` re-issued (A1) | held | — |
+| `HELD` | `PENDING_PAYMENT` | charge submitted | held | charge out |
+| `HELD` | `EXPIRED` | TTL elapsed, reaper | released | — |
+| `HELD` | `CANCELLED` | customer releases the hold | released | — |
+| `PENDING_PAYMENT` | `CONFIRMED` | `charge.succeeded`, hold still live | committed | captured |
+| `PENDING_PAYMENT` | `FAILED` | `charge.failed` | released | — |
+| `PENDING_PAYMENT` | `EXPIRED` | TTL elapsed, outcome unknown | released | still in flight |
+| `CONFIRMED` | `COMPLETED` | `end_at` passed | consumed | — |
+| `CONFIRMED` | `CANCELLED` | cancelled | released | refund intent written |
+| `CANCELLED` | `REFUNDED` | refund succeeded at Paygate | — | returned |
+| `EXPIRED` | `REFUNDED` | late capture on an expired hold (INV-4) | — | returned |
+
+Terminal: `COMPLETED`, `FAILED`, `REFUNDED`, and `CANCELLED` when the policy returns zero.
+
+Blocking states — the ones the exclusion constraint and the equipment peak check count —
+are `HELD`, `PENDING_PAYMENT` and `CONFIRMED`.
+
+### Failure edges that matter
+
+The interesting part of this machine is not the happy path but which attempted transitions are
+refused, because Paygate's chaos modes produce all of them.
+
+| Attempted | Refused because | Response |
+|---|---|---|
+| `EXPIRED` → `CONFIRMED` | **INV-4.** A capture arriving after the hold expired must not confirm. The delayed-delivery mode (5%, 60–90s) produces this on every run | refund path, not `409` — see below |
+| `CONFIRMED` → `CONFIRMED` | Duplicate webhook delivery (30%). The uniqueness on `(charge_id, event_type)` absorbs it before the transition is attempted | `200`, no-op |
+| `CANCELLED` → `CONFIRMED` | Money already returned; the slot may be resold | `409` |
+| `CANCELLED` → `CANCELLED` | Repeat cancel. Not an illegal transition — a replay (A11) | `200`, existing refund |
+| `COMPLETED` → `CANCELLED` | The booking already happened | `409` |
+| `FAILED` → `PENDING_PAYMENT` | A failed charge does not resume; the hold is gone. A new booking is required | `409` |
+| `EXPIRED` → `HELD` | The slot was released and may belong to someone else. Re-holding would bypass the exclusion constraint's decision | `409` |
+
+**`EXPIRED` → `CONFIRMED` is the one that is not simply refused.** Rejecting it and stopping
+would leave captured money against a booking that will never exist. The webhook handler finds
+the booking already `EXPIRED`, does not attempt the transition, writes a refund intent, and
+records the whole sequence in `audit_events` — the late arrival, the refusal, and the refund.
+The booking then moves `EXPIRED` → `REFUNDED`.
+
+### Where the machine is enforced
+
+Nowhere in the application. The trigger validates `(from_state, to_state)` and writes the
+`AuditEvent` in the same statement, so no code path can change state without being checked or
+without being audited. See §3.5.
 
 ---
 
@@ -408,12 +538,67 @@ not read as a defect.
 
 ## 5. Indexing and query strategy
 
-*TBD — EXPLAIN ANALYZE evidence before and after, against `--profile=full`.*
+Indexes are in `db/migrations/007_indexes.sql`. EXPLAIN evidence is in `LOAD_TEST.md`.
 
-Initial intent: the GiST index backing the exclusion constraint doubles as the availability
-index. Cross-venue search denormalizes `city` onto `rooms` to avoid a join in the hot path,
-composite btree on `(city, capacity, hourly_rate)`, GIN on amenities, then a `NOT EXISTS`
-anti-join against the range index over the reduced candidate set.
+### The one index that does double duty
+
+The GiST index backing the exclusion constraint is also the availability index. Asking "is
+this room free between 14:00 and 16:00" and asking "may this booking be inserted" are the same
+range-overlap question, so availability reads and the write-time check share one structure.
+Nothing extra is maintained to answer availability.
+
+### Cross-venue search
+
+Five filters combine: city, minimum capacity, amenity set, price ceiling, and an availability
+window. The shape is: reduce candidate rooms with the cheap filters first, then test
+availability against the smallest possible set.
+
+```sql
+SELECT r.*
+FROM   rooms r
+WHERE  r.city = $1
+  AND  r.capacity >= $2
+  AND  r.amenities @> $3::text[]
+  AND  r.hourly_rate_minor <= $4
+  AND  NOT EXISTS (
+         SELECT 1 FROM bookings b
+         WHERE  b.room_id = r.id
+           AND  b.status IN ('HELD','PENDING_PAYMENT','CONFIRMED')
+           AND  b.reserved_range && tstzrange($5, $6, '[)')
+       );
+```
+
+Availability is last on purpose. It is the only predicate that touches the large table —
+250,000 bookings against 800 rooms on the full profile — so every room eliminated first is a
+range lookup not performed.
+
+### A correction to the pre-code draft
+
+The first draft of this section proposed a composite btree on
+`(city, capacity, hourly_rate_minor)`. **That third column is wasted and the index shipped is
+`(city, capacity)` instead.**
+
+A btree can use columns after a range predicate only for filtering, not for seeking. Here
+`city` is equality, but `capacity >= $2` and `hourly_rate_minor <= $4` are both ranges. After
+`capacity`, the scan is already walking a range, so `hourly_rate_minor` never narrows it — it
+only makes the index larger and slower to maintain.
+
+Price is left as a filter on the reduced set. Whether that is sufficient, or whether the
+planner should be steered toward a `BitmapAnd` of `rooms_search_idx` with the amenities GIN,
+is a question for `EXPLAIN ANALYZE` against `--profile=full` rather than for reasoning. The
+draft is left above rather than rewritten, per §02 of the brief.
+
+### Expected plan
+
+City and capacity seek `rooms_search_idx`; the amenity containment is either a GIN bitmap
+combined with that or a recheck on the heap, depending on selectivity; the anti-join is an
+index-only probe of the partial GiST index per surviving room.
+
+### Measurements
+
+*Pending — to be filled from `--profile=full` with EXPLAIN before and after, per §08 of the
+brief. If a target is missed, what was measured and what was tried is recorded rather than
+omitted.*
 
 ---
 

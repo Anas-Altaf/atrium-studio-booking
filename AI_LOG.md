@@ -194,3 +194,46 @@ makes enqueueing a second write and a crash between commit and enqueue loses the
 guarantee that spans two systems is not a guarantee. Here it is sharper, because the thing lost
 is money, and INV-5 is precisely about money not being lost silently. `SKIP LOCKED` also
 answered the objection I had ready, that three replicas would collide on the same rows.
+
+---
+
+### 12. State machine, including failure edges
+**Delegated:** Turn the brief's diagram into a full transition matrix with every failure edge.
+
+**Returned:** The matrix, plus a table of refused transitions mapped to the Paygate chaos mode
+that produces each one, and the observation that `EXPIRED → CONFIRMED` cannot simply be
+refused — refusing it and stopping leaves captured money against a booking that will never
+exist, so it must route to the refund path instead.
+
+**Verdict:** `ACCEPTED`
+
+**My reasoning for accepting:** The brief's diagram only shows the happy path plus three exits.
+Tying each refused edge to the chaos mode that causes it is what makes the machine testable
+rather than decorative, and the `EXPIRED → CONFIRMED` distinction is INV-4 stated as a
+transition rather than as prose. Two edges are mine and are not in the brief's diagram:
+`HELD → HELD` for the checkout re-issue in A1, and `HELD → CANCELLED` for a customer releasing
+a hold before paying.
+
+---
+
+### 13. Schema and migrations
+**Delegated:** Write the migrations from the agreed table shape, then §1 and §5.
+
+**Verdict:** `MODIFIED`
+
+**What the agent got right without being asked:** it caught that my proposed composite index
+`(city, capacity, hourly_rate_minor)` wastes its third column — a btree stops seeking after the
+first range predicate, and both `capacity >=` and `price <=` are ranges. Shipped as
+`(city, capacity)` with price filtered on the reduced set, and the original left in §5 with a
+note rather than rewritten.
+
+**What I changed:** it wrote the audit trigger reading `actor_id` from a session variable —
+the same mechanism I had just rejected for row-level security in §4A. I kept it, but only with
+`SET LOCAL` and with the inconsistency addressed in a comment in the migration rather than left
+for a reviewer to find: a variable leaking across a pooled connection puts a wrong actor on an
+audit row, which is a data-quality fault, whereas in RLS the same leak decides what a caller
+may read. Different blast radius, same mechanism.
+
+**Not yet verified:** no Postgres was available in the environment where these were written, so
+the migrations are unexecuted at the time of this entry. Anything that fails on first run gets
+its own entry.
