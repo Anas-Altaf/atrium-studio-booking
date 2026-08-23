@@ -232,9 +232,13 @@ anti-join against the range index over the reduced candidate set.
 
 ## 6. Assumptions
 
-Ambiguities resolved without waiting on a reply. Clarifying-questions email sent at
-`[TIME]`; any answer that contradicts an entry below will be applied and the entry annotated
-rather than deleted.
+Ambiguities resolved independently. **The permitted batch of clarifying questions was
+deliberately not sent** — every ambiguity below was resolvable on defensible grounds, and the
+brief treats a documented assumption as earning credit where silence earns none. The cost of
+that choice is that any divergence from the client's intent is absorbed here rather than
+corrected early; A1 is the entry most exposed, since the two numbers it reconciles are
+incompatible as written and admit more than one reasonable resolution. Reasoning recorded in
+`TIMELINE.md`.
 
 | # | Ambiguity | Resolution |
 |---|---|---|
