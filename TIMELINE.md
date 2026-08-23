@@ -99,6 +99,35 @@ concurrency core with the gap written down. Recorded in README.
 **Cut:** two known defects, documented rather than fixed — the `request-id` header overriding
 the correlation id, and `TRUNCATE` bypassing the append-only triggers.
 
+### Aug 23 · 11:00–12:00 — Deployment prep, and the 100x section
+
+Deployment is the one hard cap still unmet, so it went first. CORS, TLS to a managed Postgres,
+a Render service definition and a one-page frontend are written and verified locally. Seeding
+Neon and the live URLs are blocked on accounts only I can create.
+
+Building the frontend turned up something the cut list had wrong: there was no way to list
+rooms. Rather than stub it, built the cross-venue search from §5 — so the search endpoint
+recorded as cut in the hour above is in after all, with the real filter order. That reverses
+the cut rather than hiding it.
+
+Spent the rest on ARCHITECTURE, which is 35% and had two sections still reading `TBD`:
+
+- §3.3 now carries the actual proof output, which the brief asked for explicitly. It was not
+  there before.
+- §7 is measured rather than argued: the GiST index at 1,592 kB today against 128 MB of shared
+  buffers, an `EXPLAIN` showing 12,740 rows discarded per equipment check on a 24,680-row
+  table, and `audit_events` sitting on the write path of every transition. Three failure modes,
+  three remedies, one candidate ruled out.
+- §3.5 keeps its original claim about role-level revokes and carries a note beneath it saying
+  what was actually found. §4 is relabelled: specified, not implemented.
+
+One false alarm cost about fifteen minutes. The proof started returning 502s after a rebuild
+and I guessed twice — stale holds, then pool exhaustion — before measuring. It was nginx
+caching upstream IPs for containers that had been recreated underneath it. Logged as AI_LOG 18,
+because the guessing is the part worth remembering.
+
+**Still open:** `LOAD_TEST.md` is empty, and it is a named deliverable.
+
 ---
 
 ## Cuts
@@ -107,7 +136,8 @@ the correlation id, and `TRUNCATE` bypassing the append-only triggers.
 |---|---|
 | Clarifying-questions batch | Ambiguities resolvable; documented as A1–A8 |
 | Raw/polished scratch files | Overhead; invites end-of-window reconstruction |
-| Paygate, confirm, cancellation, refunds, reaper, search | No window left after the stack first ran; concurrency core proven instead |
+| Paygate, confirm, cancellation, refunds, reaper | No window left after the stack first ran; concurrency core proven instead |
+| ~~Cross-venue search~~ | Cut at 11:00, then reversed — the frontend needed it and §5 already had the query |
 
 ---
 

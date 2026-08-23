@@ -324,6 +324,47 @@ Expected result of the 200-request proof: exactly 1 room booking in a blocking s
 `SUM(quantity) <= 3` for the 3-unit equipment type at every instant, and every other request
 returning `409`. Zero 5xx. Zero duplicate successes.
 
+Actual run, against `docker compose` with three replicas behind nginx and the demo profile
+seeded:
+
+```
+target slot: 2026-08-27T09:00:00.000Z -> 2026-08-27T10:00:00.000Z
+load balancer: http://localhost:8080
+concurrency: 200
+
+PHASE A  one room, one slot, 200 concurrent holds
+┌─────────┬────────┐
+│ (index) │ Values │
+├─────────┼────────┤
+│ 201     │ 1      │
+│ 409     │ 199    │
+└─────────┴────────┘
+replicas that served traffic: api-3, api-1, api-2
+  PASS  exactly 1 request succeeded
+  PASS  exactly 1 booking holds the slot
+  PASS  every other request got 409
+  PASS  zero 5xx
+  PASS  all three replicas participated
+
+PHASE B  200 distinct rooms, one EquipmentType owning 3 units
+┌─────────┬────────┐
+│ (index) │ Values │
+├─────────┼────────┤
+│ 201     │ 3      │
+│ 409     │ 197    │
+└─────────┴────────┘
+  PASS  at most 3 units reserved
+  PASS  exactly 3 units reserved
+  PASS  successes match units
+  PASS  zero 5xx
+  PASS  no duplicate successes beyond capacity
+
+PROOF PASSED
+```
+
+Phase B is the one worth reading twice. Three units owned, three successes, 197 refusals — and
+the rooms are all distinct, so nothing but the equipment check could have produced that number.
+
 ### 3.4 Expired holds and the reaper
 
 A hold past its TTL but not yet reaped still satisfies the exclusion constraint's `WHERE`
@@ -349,6 +390,19 @@ audit. Illegal transitions raise, and are mapped to `409`.
 `UPDATE` and `DELETE` are revoked on `audit_events` at the role level so append-only is a
 database guarantee, not a code convention.
 
+> **Found during the build — the claim above was not true as configured.** A role cannot be
+> revoked from tables it owns, and the application connects as the owner both under
+> `docker compose` and on a free hosting tier where creating a second role is not always
+> possible. So migration `006` was protecting nothing in the environment it actually ran in.
+> Migration `008` adds `BEFORE UPDATE OR DELETE` triggers that reject the write whichever role
+> is connected. Both are kept: the privilege is the right mechanism for production, the trigger
+> is the one actually fastened here. The paragraph above is left as written rather than
+> corrected, because the gap between the two is the point.
+>
+> One hole remains and is not closed: row-level triggers do not fire on `TRUNCATE`, and the
+> owner has that right — `src/db/seed.ts` uses it. Closing it needs a `BEFORE TRUNCATE`
+> statement trigger and a separate migrator role for the seed. Recorded in README.
+
 **Trade-off accepted:** meaningful business logic now lives in the database, which is harder
 to unit test and harder for a reviewer to find than a service class. Recorded in
 DECISIONS.md.
@@ -357,7 +411,13 @@ DECISIONS.md.
 
 ## 4. Payment integrity model
 
-*Draft — full treatment follows the Paygate build.*
+> **Specified, not implemented.** The Paygate build was cut — see TIMELINE and the README
+> "Not built" table. What follows is the design as settled, and the schema for it is migrated
+> and live (`payments`, `refunds`, `webhook_events`, `unmatched_webhooks`, with
+> `one_live_charge_per_booking` and `one_live_refund_per_booking` enforcing INV-3 and the
+> refund gate at the database level). No code calls it, so INV-3, INV-4 and INV-5 are
+> structurally supported and behaviourally unproven. Reading this section as a description of
+> working software would be wrong.
 
 Exactly-once **effect** over an at-least-once, out-of-order channel. Deduplication is on
 business effect, not on delivery identity: `X-Paygate-Delivery` is new on every attempt and
@@ -628,8 +688,105 @@ incompatible as written and admit more than one reasonable resolution. Reasoning
 
 ## 7. What breaks at 100x
 
-*TBD.*
+Measured on the demo profile — 24,680 bookings, `shared_buffers` 128 MB — and extrapolated to
+25 million, which is 100x the full profile. Sizes below are real `pg_relation_size` readings.
+
+### 1. The GiST exclusion index stops fitting in shared buffers
+
+`no_room_overlap` is 1,592 kB at 24,680 bookings. At 25 million that is roughly **1.6 GB**
+against 128 MB of shared buffers, and a managed free tier will not be more generous.
+
+This matters more here than a cold index usually would, because of *when* the index is read.
+The exclusion check runs inside the hold transaction, and a conflicting inserter waits on the
+winner while holding its own transaction open. Once the index is disk-resident that wait grows
+by a random read — and the 200-request proof already showed that when waits lengthen, Postgres
+starts resolving them as deadlocks (`40P01`, §3.3 and `AI_LOG` 16). The retry path absorbs that
+today. It would not absorb it at ten times the wait.
+
+**Remedy:** range-partition `bookings` by month on `start_at`. The exclusion constraint then
+lives per partition and only the current and next month is hot, so the working set stays flat
+however much history accumulates. The honest catch: a partitioned exclusion constraint must
+include the partition key, so a booking spanning a boundary is not covered. Maximum duration is
+8 hours, so that is only bookings crossing midnight on the last day of a month — they need
+either a coarser boundary or a small unpartitioned overlap table checked alongside.
+
+### 2. The equipment peak check scans a set that grows with the table
+
+Not a projection. `EXPLAIN ANALYZE` on the peak query at 24,680 bookings:
+
+```
+->  Nested Loop Left Join
+      Join Filter: ((b.start_at <= now()) AND (b.end_at > now()))
+      Rows Removed by Join Filter: 12740
+```
+
+**12,740 rows examined and discarded** to price one hold, on a table of 24,680. No index serves
+interval containment for the active statuses, so the join degenerates into a filter. At 25
+million bookings that is on the order of **13 million rows discarded per hold** — and it happens
+while holding `FOR UPDATE` on the `equipment_types` row, so it is not merely slow, it is slow
+while blocking every other hold for that equipment type.
+
+The mechanism in §3.2 is still correct. The query implementing it is not indexed for the shape
+it actually runs.
+
+**Remedy:** drive the join from `booking_line_items` rather than from `bookings`.
+`line_items_equipment_idx (equipment_type_id, booking_id)` already exists and cuts the candidate
+set to that one equipment type before `bookings` is touched. If that is still too wide, add a
+GiST index on `tstzrange(start_at, end_at)` partial on the three active statuses, which turns
+containment into a range lookup — the same tool INV-1 already uses.
+
+### 3. `audit_events` grows about five times faster than `bookings`
+
+It is 1:1 today — 24,680 rows against 24,680 bookings — but only because seeded bookings never
+move. A real booking walks `HELD → PENDING_PAYMENT → CONFIRMED → COMPLETED`, and every edge
+writes a row from inside the state-machine trigger. At 25 million bookings that is on the order
+of **125 million audit rows**, each an INSERT plus btree maintenance on
+`audit_events_booking_idx (booking_id, occurred_at)` in the same transaction as the state
+change. The audit trail sits on the write path of every transition, so its size is a tax on
+throughput, not just on storage.
+
+**Remedy:** range-partition `audit_events` by `occurred_at` and detach old partitions to cold
+storage. Nothing reads the whole table — per-booking history is bounded by the booking, and INV-5
+reconciliation needs only a recent window. Detaching does not violate append-only: the rows are
+moved, never modified.
+
+### Not on this list, and why
+
+`bookings_reaper_idx` is 16 kB and stays that way by construction. It is partial on `HELD`, and
+a `HELD` row is either taken or reaped within minutes, so it indexes the queue rather than the
+history and does not grow with the table.
 
 ## 8. What I would do with two more weeks
 
-*TBD.*
+Priority order, and the first item is not close.
+
+**1. Paygate and the payment path.** The largest hole in the submission. Three of the six
+invariants — INV-3, INV-4, INV-5 — rest on constraints that nothing exercises, so they are
+asserted rather than demonstrated. Order inside it: mock provider with the brief's chaos modes;
+`POST /bookings/:id/checkout` persisting the derived idempotency key *before* the outbound call;
+the webhook handler (HMAC on the raw body, dedup insert on `(charge_id, event_type)`, 200, no
+work inline); the `SKIP LOCKED` worker that drives transitions; the sweeper for
+`unmatched_webhooks`. INV-4 falls out of the last step — a capture landing against an expired
+hold routes to refund instead of to `CONFIRMED`.
+
+**2. Cancellation, the refund calculator, the reconciliation endpoint.** §4B and §4C are
+designed, policy versions are migrated, and every booking already points at the version in force
+— the terms are frozen correctly and nothing reads them. Reconciliation is three anti-joins, and
+is what turns "money is never silently lost" from a claim into a query anyone can run.
+
+**3. The reaper.** Small, and currently the reason an abandoned hold blocks its slot forever
+rather than for seconds. §3.4 is written; it is a guarded `UPDATE` on a short interval.
+
+**4. Fix what §7 measured.** The equipment join order is a small change with a large effect and
+should not wait for partitioning.
+
+**5. Row-level security.** §4A chose repository scoping over RLS on a pooling argument that still
+holds, and recorded RLS as the next step. With `SET LOCAL` now proven safe by the audit trigger,
+the pooling objection is answerable, and RLS would put INV-6 in the database beside INV-1 and
+INV-2 instead of leaving it in the type system.
+
+**6. `--profile=full`, the benchmark, and `LOAD_TEST.md` with real numbers.** §5 carries a
+strategy with no measurements behind it. `LOAD_TEST.md` records exactly what is unmeasured.
+
+**7. Close the `TRUNCATE` hole** in the append-only guarantee — a `BEFORE TRUNCATE` statement
+trigger plus a dedicated migrator role so the seed can still do its job.

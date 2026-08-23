@@ -282,79 +282,111 @@ the equipment check.
 
 ---
 
-### 15. First real migration run — three defects, one of them mine
-**Delegated:** Bring the stack up under `docker compose`, find out what actually fails, and
-close whatever blocks Tier 1's hard caps in the remaining window.
+### 15. First migration run
+**Delegated:** Bring the stack up under `docker compose` and fix whatever blocks the hard caps.
 
-**Verdict:** `MODIFIED`
+**Verdict:** `MODIFIED` — three defects, the first one mine.
 
-**1. The generated column never compiled (mine, not the agent's).** `docker compose up` died on
-`003` with `generation expression is not immutable`. `reserved_range` was written as
-`tstzrange(start_at, end_at + interval '15 minutes')`, and a generated column's expression must
-be IMMUTABLE — but `timestamptz + interval` is only STABLE, because the same operator also does
-month and day arithmetic, which depends on the session TimeZone. `timestamp + interval`, without
-the zone, is IMMUTABLE; that asymmetry is the whole bug. A fixed 15 minutes never touches
-timezone rules, so wrapping it in a function marked IMMUTABLE is accurate rather than a
-workaround. Verified before accepting it: same absolute instant under UTC, `Europe/London` across
-a DST boundary, and `Asia/Karachi`. This is the design decision in CLAUDE.md §3 — the turnaround
-as geometry — surviving contact with the database, and it stayed geometry.
+**The schema had never been able to migrate.** `003` died on
+`generation expression is not immutable`. A generated column's expression must be IMMUTABLE and
+`timestamptz + interval` is only STABLE, because the same operator also does month and day
+arithmetic that depends on TimeZone. `timestamp + interval` is IMMUTABLE; that asymmetry is the
+bug. A fixed 15 minutes never touches timezone rules, so an IMMUTABLE wrapper is accurate rather
+than a workaround — checked under UTC, `Europe/London` across a DST boundary, and
+`Asia/Karachi` before accepting it. Every later migration then applied unchanged.
 
-**2. Cross-venue authorisation was missing on the write side.** `assertVenueWritable` existed,
-was imported into the repository, was re-exported from it, and was called by nothing.
-`createHold` loaded the room by id with no scope check at all, so a `VENUE_ADMIN` of venue A
-could hold a room in venue B and receive a `201`. This sits directly under hard cap 3. The fix is
-not `assertVenueWritable` as written: that helper returns false for a `CUSTOMER`, who has no
-`venue_id` and must be able to book anywhere. The correct predicate is that only *venue-scoped*
-roles are confined — `isVenueScoped(scope) && scope.venueId !== room.venue_id` — answered `404`
-rather than `403` so the response cannot be used to enumerate room ids (A8).
+**`createHold` had no venue check.** `assertVenueWritable` was imported into the repository,
+re-exported from it, and called by nothing, so a `VENUE_ADMIN` could hold another venue's room
+and get a `201`. That is hard cap 3. The helper is also the wrong test: it returns false for a
+`CUSTOMER`, who has no venue and must be able to book anywhere. The predicate is that only
+venue-scoped roles are confined. Answered `404`, not `403`, so it cannot be used to enumerate
+room ids (A8).
 
-**3. The test written for that cap could not have caught it.** `tenant-isolation.test.ts`
-asserted only `400 <= status < 500` on the cross-venue hold. The room exclusion constraint
-returns `409` whenever the seeded room happens to be busy, so the test would have gone green
-against a completely unauthorised booking roughly half the time, depending on the seed. Tightened
-to `403 | 404` plus an assertion that no booking row exists afterwards. Two fixtures were also
-non-deterministic: venues were ordered by `created_at`, but the seed inserts them all in one
-transaction so `now()` is identical on every row and the tie broke arbitrarily — the fixture could
-hand venue A's booking to admin B and fail an otherwise correct system. Venues are now resolved
-through the admin accounts themselves.
+**The test for that cap could not have caught it.** It asserted `400 <= status < 500`, and the
+exclusion constraint returns `409` whenever the seeded room is busy — so it would have passed
+against an unauthorised booking about half the time. Now `403 | 404` plus an assertion that no
+row was written. Two fixtures were also ordered by a `created_at` that is identical on every
+seeded venue, since the seed inserts them in one transaction.
 
-**Where I was wrong earlier.** Entry 13 records the migrations as unverified because no Postgres
-was available. That was accurate, but I then let `008` and the isolation test be written and
-reviewed on top of a schema that had never once been executed. The immutability failure was
-sitting in `003` the whole time and would have been caught in ten seconds by a single run.
-
-**Result:** 7/7 isolation tests pass against a seeded database. The cross-venue hold now returns
-`404` and writes nothing.
+**Where I was wrong:** entry 13 recorded the migrations as unverified, and I then let `008` and
+the isolation test be built on top of a schema that had never once run. One execution would have
+found the immutability failure immediately.
 
 ---
 
-### 16. First 200-request proof run — three more defects
-**Delegated:** Bring up three replicas behind nginx and run the concurrency proof.
+### 16. First 200-request proof run
+**Delegated:** Three replicas behind nginx, then run the proof.
 
-**Verdict:** `MODIFIED`
+**Verdict:** `MODIFIED` — three defects.
 
-**1. The stack never started.** `api-1`'s healthcheck was
-`wget http://localhost:3000/health`. Inside the container `localhost` resolves to `::1` first,
-and the server binds `0.0.0.0`, which is IPv4 only — so the check was refused, `api-1` stayed
-unhealthy, and `api-2`, `api-3` and nginx never started at all because they depend on it. Server
-logs said "listening" the whole time. Changed to `127.0.0.1`.
+**The stack never started.** `api-1`'s healthcheck used `http://localhost:3000/health`. Inside
+the container `localhost` resolves to `::1`, the server binds `0.0.0.0`, and the check was
+refused — so `api-1` stayed unhealthy and the other two replicas and nginx never started, while
+the logs said "listening". Changed to `127.0.0.1`.
 
-**2. Deadlocks under real concurrency, surfacing as 500.** The first run returned 195 × 500 and
-5 × 504, zero successes. Cause: a GiST exclusion constraint at 200-way concurrency genuinely
-deadlocks — two transactions each place their index entry, then each scans, finds the other, and
-waits on the other's transaction, so Postgres kills one with `40P01`. The invariant was never at
-risk; the API's answer was. `40P01` is a lost race, and the brief requires a lost race to be a
-clean `409`. Retried in `withTransaction` (the victim is fully rolled back, so replay is safe)
-and translated to `409` if it survives. The pool was also the wrong size: every waiter holds a
-connection for the duration of the wait, so at `max: 10` the eleventh request could not get one
-and timed out. This is worth stating plainly — the correctness argument for the exclusion
-constraint was right, and it still returned 500s on first contact with 200 clients.
+**Deadlocks answered `500`.** First run: 195 × 500, zero successes. A GiST exclusion constraint
+at 200-way concurrency genuinely deadlocks — two inserts place their index entries, then each
+scans, finds the other, and waits on it, so Postgres kills one with `40P01`. The invariant was
+never at risk; the response code was. A deadlock is a lost race, and the brief requires a lost
+race to be a clean `409`. Retried in `withTransaction` — the victim is fully rolled back, so
+replay is safe — and translated if it survives. The pool was also too small at 10: every waiter
+holds a connection for the length of its wait.
 
-**3. The proof's own fixture could not clean up.** It deleted the previous run's rows, which
-`audit_events` refuses: it holds a foreign key to every booking and migration `008` blocks
-`DELETE` whichever role is connected. The append-only guarantee blocking the test's own teardown
-is the guarantee working, so the fixture is per-run now — every object carries a run id and
-nothing is ever deleted.
+**The fixture could not clean up after itself.** It deleted the previous run's rows, which
+`audit_events` refuses — it holds a foreign key to every booking and `008` blocks the delete
+whichever role is connected. That is the guarantee working, so the fixture is per-run now and
+deletes nothing.
 
-**Result:** proof passes. Phase A 1 × 201 and 199 × 409; phase B exactly 3 × 201 against 3 units
-owned and 197 × 409; zero 5xx in both; all three replicas served traffic.
+---
+
+### 17. Deployment preparation
+**Delegated:** Prepare Neon, Render and Vercel — CORS, TLS, a service definition, a frontend.
+
+**Verdict:** `MODIFIED` — the buildable parts are done; the parts needing accounts are not mine.
+
+**`@fastify/cors` installed at the wrong major.** `npm install` resolves it to v11, which
+declares `fastify: '5.x'` in its plugin metadata against our Fastify 4.29 — registration would
+have thrown at boot. The package declares no `peerDependencies`, so npm installed it silently.
+Pinned to `^8.5.0`.
+
+**An unset `CORS_ORIGINS` means `origin: false`, not `origin: true`.** A missing variable
+should not make the API trust every origin. Verified: preflight from the Vercel origin answers
+`204` with `authorization` allowed, and an untrusted origin gets no header at all.
+
+**TLS is derived from the host, not from a flag.** `node-postgres` does not enable TLS by
+default and Neon refuses plaintext, so the deployed instance would fail at boot. A `SSL=true`
+variable is one more thing to forget; the pool decides from the hostname instead. **Unproven
+against Neon** — there is no connection string yet, and I am not recording it as working until
+it has connected once.
+
+**The frontend needed an endpoint that did not exist.** There was no way to list rooms, so
+rather than stub one, built the cross-venue search from ARCHITECTURE §5 — cheap predicates on
+`rooms` first, availability `NOT EXISTS` last. A customer sees all 8 seeded venues, a venue
+admin sees exactly one, so INV-6 holds there too.
+
+**Blocked:** creating the Neon, Render and Vercel accounts is not something an agent should do
+on my behalf, so seeding Neon and the live URLs wait on me.
+
+---
+
+### 18. A proof regression that was not one
+**Delegated:** The proof started failing after a rebuild — 502s and 504s, only one replica
+answering. Find it.
+
+**Verdict:** `MODIFIED` — two wrong diagnoses before one measurement.
+
+First guess was stale `HELD` rows from earlier runs piling into the exclusion index. Second was
+pool exhaustion, on the strength of a `timeout exceeded when trying to connect` in the logs.
+Both were plausible and both were wrong.
+
+Measuring settled it in one query: 7 `HELD` rows in the whole database, and a single hold
+returning `201` in 99 ms. Nothing was slow.
+
+The actual cause was `docker compose up --build`, which recreated `api-1/2/3` with new
+container IPs but left `lb` running. nginx resolves its upstreams once at startup and caches
+them, so it was proxying to addresses that no longer existed. `docker compose restart lb` and
+the proof passed 10/10.
+
+**Worth keeping:** the two failed diagnoses were both consistent with the symptom, and the
+number that killed them — 7 held rows — took less time to get than either theory took to
+construct.
