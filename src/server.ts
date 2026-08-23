@@ -26,6 +26,27 @@ export async function build() {
     },
   });
 
+  // Before every register() call, not after. A plugin registered with
+  // app.register() gets its own encapsulation context and captures the error
+  // handler in force at that moment, so a handler set afterwards never reaches
+  // any route. Deploying found this: a Zod failure came back as a 500 carrying
+  // the raw validation detail instead of a 400. Same encapsulation trap as the
+  // auth decorator in AI_LOG 14.
+  app.setErrorHandler((err, req, reply) => {
+    if (err instanceof AppError) {
+      return reply.code(err.statusCode).send({
+        error: err.code, message: err.message, correlationId: req.id,
+      });
+    }
+    if (err instanceof ZodError) {
+      return reply.code(400).send({
+        error: 'VALIDATION_FAILED', issues: err.issues, correlationId: req.id,
+      });
+    }
+    req.log.error({ err }, 'unhandled error');
+    return reply.code(500).send({ error: 'INTERNAL', correlationId: req.id });
+  });
+
   // Before the routes, so the preflight is answered for every one of them. The
   // frontend is on a different origin, so without this every browser call fails
   // while curl succeeds -- the failure mode that looks like a broken API.
@@ -68,21 +89,6 @@ export async function build() {
         error: (err as Error).message,
       });
     }
-  });
-
-  app.setErrorHandler((err, req, reply) => {
-    if (err instanceof AppError) {
-      return reply.code(err.statusCode).send({
-        error: err.code, message: err.message, correlationId: req.id,
-      });
-    }
-    if (err instanceof ZodError) {
-      return reply.code(400).send({
-        error: 'VALIDATION_FAILED', issues: err.issues, correlationId: req.id,
-      });
-    }
-    req.log.error({ err }, 'unhandled error');
-    return reply.code(500).send({ error: 'INTERNAL', correlationId: req.id });
   });
 
   return app;
