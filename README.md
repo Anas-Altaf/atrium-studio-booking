@@ -39,7 +39,7 @@ curl localhost:8080/health
 | | |
 |---|---|
 | API | https://atrium-api-c88i.onrender.com |
-| Frontend | _pending_ |
+| Frontend | _pending_ — Next.js app in [`web/`](./web), ready to deploy |
 | Database | Neon, free tier |
 
 ```bash
@@ -64,6 +64,20 @@ nothing `docker compose` does not already prove.
 
 Render's free tier sleeps after 15 minutes idle; the first request after that pays a 30–60
 second cold start.
+
+### The two origins have to agree
+
+The frontend and the API are on different origins, so two variables point at each other:
+
+| Where | Variable | Value |
+|---|---|---|
+| Frontend (Vercel) | `NEXT_PUBLIC_API_BASE_URL` | the API origin, e.g. `https://atrium-api-c88i.onrender.com` |
+| API (Render) | `CORS_ORIGINS` | the frontend origin, e.g. `https://atrium-web.vercel.app` — no trailing slash |
+
+If `CORS_ORIGINS` is unset or wrong, every browser call fails while `curl` keeps working. That
+is deliberate: an unset value allows nothing rather than everything, so forgetting it fails
+closed. Both accept a comma-separated list, so `http://localhost:3000` can sit alongside the
+deployed origin.
 
 ### Test logins
 
@@ -138,8 +152,11 @@ costs a great deal.
 | **`--profile=full` and the benchmark** | Not run. No p50/p95/p99 numbers. Targets and method in [`LOAD_TEST.md`](./LOAD_TEST.md) |
 | **Everything in Tier 2 and Tier 3** | Not started. This was deliberate — see `TIMELINE.md` |
 
-Built but not deployed: the frontend in `web/`. One page — log in, search rooms, hold, see the
-409. It is a demo surface over the API, not a product.
+Built but not deployed: the frontend in [`web/`](./web) — Next.js App Router, TypeScript,
+Tailwind, no other dependencies. One page: sign in, search rooms across venues, hold a room,
+hold it again and watch the exclusion constraint refuse. It also shows the correlation id of
+every response, and lets you read a booking by its real UUID as the wrong venue admin to see
+the 404. A demo surface over the API, not a product.
 
 ### Verified
 
