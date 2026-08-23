@@ -67,6 +67,14 @@ over mutable rows. Assumptions A9 and A10 added.
 referenced. Correct, but more machinery than the problem deserves and harder to defend in one
 sentence.
 
+### Aug 23 · 09:00–10:00 — Refund idempotency and background work
+§4C: cancellation is the thing made idempotent, not the refund — the state machine already
+guarantees it. Refund intent written in the same transaction as the transition. A11 added on
+the literal reading of "illegal transition".
+
+§4D: background jobs in Postgres with `FOR UPDATE SKIP LOCKED`, worker inside the API process.
+Redis rejected on the dual-write argument.
+
 ---
 
 ## Cuts

@@ -107,6 +107,18 @@ behaviour at all.
 
 ---
 
+### 9. Background jobs in Postgres, not a queue
+**Chose:** Job rows in Postgres, polled with `FOR UPDATE SKIP LOCKED`; the worker runs inside
+the API process.
+**Rejected:** Redis with BullMQ.
+**Trade-off:** Roughly a second of polling latency, and a poll per second per replica.
+Accepted because an external queue makes enqueueing a second write — commit the booking, then
+enqueue — and a crash between them loses the refund silently, which is INV-5 inverted. In one
+database the job row and the business change are the same commit. It also removes a service
+from `docker compose` and a free tier from the deployment.
+
+---
+
 <!--
 Format:
 

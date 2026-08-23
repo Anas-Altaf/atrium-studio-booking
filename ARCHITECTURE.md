@@ -372,6 +372,40 @@ them can win.
 
 ---
 
+## 4D. Background work
+
+Four jobs run outside the request path: the hold reaper, the refund driver, webhook
+processing, and the unmatched-webhook sweeper.
+
+**Mechanism: Postgres tables polled with `FOR UPDATE SKIP LOCKED`.** No queue service.
+
+```sql
+SELECT * FROM refunds WHERE status = 'PENDING'
+FOR UPDATE SKIP LOCKED LIMIT 10;
+```
+
+`SKIP LOCKED` passes over rows another transaction already holds, so three replicas polling
+the same table take disjoint work without waiting on each other.
+
+**Why, over Redis and BullMQ.** A queue outside the database makes enqueueing a second write:
+commit the booking, then enqueue the job. If the process dies between them, the booking is
+cancelled and the refund job never existed — money lost silently, which is INV-5 inverted. In
+one database the job row and the business change are the same commit.
+
+Retries are an `attempts` and `next_attempt_at` column; a row exhausting its attempts becomes
+`FAILED` and surfaces in the reconciliation report rather than disappearing.
+
+**Cost accepted:** polling latency of roughly one second, and three replicas each issuing a
+poll per second.
+
+**The worker runs inside the API process**, not as a separate container — a second service on
+the free tier sleeps independently, and `SKIP LOCKED` already makes three concurrent workers
+safe. Consequence for the deployed demo: the host sleeps after 15 minutes idle, so the reaper
+stops with it. Holds made just before sleep are reaped on wake. Noted in the README so it is
+not read as a defect.
+
+---
+
 ## 5. Indexing and query strategy
 
 *TBD — EXPLAIN ANALYZE evidence before and after, against `--profile=full`.*

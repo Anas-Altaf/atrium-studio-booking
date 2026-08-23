@@ -178,3 +178,19 @@ the same transaction closes that.
 brief's wording on illegal transitions. I read that wording literally — an illegal transition
 is a `(from, to)` pair absent from the matrix, and asking for a state the booking already holds
 is not a transition but a replay. Settled as `200` with the existing refund, recorded as A11.
+
+---
+
+### 11. Background job mechanism
+**Delegated:** Queue service or Postgres for the reaper, refund driver, webhook processing and
+sweeper.
+
+**Returned:** Postgres with `FOR UPDATE SKIP LOCKED`, on the grounds that an external queue
+makes enqueueing a second write and a crash between commit and enqueue loses the job silently.
+
+**Verdict:** `ACCEPTED`
+
+**My reasoning for accepting:** The dual-write argument is the same one that decided §4C — a
+guarantee that spans two systems is not a guarantee. Here it is sharper, because the thing lost
+is money, and INV-5 is precisely about money not being lost silently. `SKIP LOCKED` also
+answered the objection I had ready, that three replicas would collide on the same rows.
