@@ -107,12 +107,26 @@ costs a great deal.
 | **Frontend** | Not built |
 | **Everything in Tier 2 and Tier 3** | Not started. This was deliberate — see `TIMELINE.md` |
 
-### Built but not verified
+### Verified, and what verifying cost
 
 The database was not available in the environment where most of this was written, so
 **migrations 001–008 and the application had not been executed at the time this section was
-first written.** Anything that failed on first run is recorded in `AI_LOG.md` rather than
-quietly fixed.
+first written.** They have since been run. Everything that failed on first run is in
+`AI_LOG.md` entries 15 and 16 rather than quietly fixed — four defects, one of which meant the
+schema had never been able to migrate at all, and one of which was an open hole under a scoring
+hard cap.
+
+What now holds, against a seeded database and three replicas behind nginx:
+
+| | Evidence |
+|---|---|
+| Concurrency proof (`npm run proof`) | Phase A: 1 × 201, 199 × 409. Phase B: exactly 3 × 201 against 3 units owned, 197 × 409. Zero 5xx in both. All three replicas served traffic |
+| Tenant isolation (`npm test`) | 7/7. A venue A admin holding a venue B room by direct UUID gets 404 and no row is written |
+| Migrations | 001–008 apply clean from empty |
+| Seed | `--profile=demo`, 24,675 bookings |
+
+**Still not deployed.** This is the one hard cap not met, and it is not met for want of time
+rather than for want of a plan — see the hosting note below.
 
 ### Real defects
 
@@ -129,6 +143,18 @@ rejected for row-level security in §4A. It is set with `SET LOCAL` so it cannot
 transaction. The inconsistency is deliberate and argued in the migration comment: a leak here
 puts a wrong actor on an audit row, a data-quality fault; the same leak under RLS would decide
 what a caller is allowed to read.
+
+**A `request-id` header overrides the correlation id.** Fastify's default `requestIdHeader`
+is `request-id`, and it takes precedence over `genReqId`, so a client sending that header
+replaces the id nginx set from `$request_id`. Found in review, left in: the fix is one option
+on the Fastify factory, but it is not covered by a test and nothing else was going to be either
+in the window remaining. Logged rather than half-fixed.
+
+**`TRUNCATE` bypasses the append-only triggers.** Row-level `BEFORE DELETE` triggers do not
+fire on `TRUNCATE`, and the owner role has that right — `src/db/seed.ts` uses it. So the
+guarantee in migration `008` holds against `DELETE` and `UPDATE` from any role, but not
+against a truncate by the owner. Closing it needs a `BEFORE TRUNCATE` statement trigger plus a
+separate migrator role for the seed, which is more than the remaining window allowed.
 
 **Bookings are priced on wall-clock hours**, so a booking spanning a DST transition in London
 is charged for the hours the clock shows rather than the hours elapsed. Timestamps themselves

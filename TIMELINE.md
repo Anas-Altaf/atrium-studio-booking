@@ -75,6 +75,30 @@ the literal reading of "illegal transition".
 §4D: background jobs in Postgres with `FOR UPDATE SKIP LOCKED`, worker inside the API process.
 Redis rejected on the dual-write argument.
 
+### Aug 23 · 10:00–11:00 — First execution, and what it cost
+Ran the stack for the first time. It did not start: `003` failed on
+`generation expression is not immutable`, because `timestamptz + interval` is only STABLE.
+Wrapped in an IMMUTABLE function. Every migration after it applied unchanged, so this was the
+only blocker — but it had been sitting there since the schema was written, unexecuted.
+
+That run then exposed three more: no venue check on the hold path at all (hard cap 3), an
+isolation test too loose to have caught it, and 200-way deadlocks on the exclusion constraint
+answering `500` instead of `409`. All four fixed and verified.
+
+Both testable hard caps now hold, against a seeded database and three replicas:
+
+| Cap | Evidence |
+|---|---|
+| Concurrency proof | Phase A 1 × 201 / 199 × 409; phase B 3 × 201 against 3 units / 197 × 409; zero 5xx; all three replicas |
+| Cross-venue authorisation | 7/7 isolation tests, including a hold by direct room UUID answering 404 and writing nothing |
+
+**Cut:** Paygate, confirm, cancellation, refunds, the reaper and cross-venue search. Roughly an
+hour was left after the stack ran, and a half-built payment path is worth less than a proven
+concurrency core with the gap written down. Recorded in README.
+
+**Cut:** two known defects, documented rather than fixed — the `request-id` header overriding
+the correlation id, and `TRUNCATE` bypassing the append-only triggers.
+
 ---
 
 ## Cuts
@@ -83,6 +107,7 @@ Redis rejected on the dual-write argument.
 |---|---|
 | Clarifying-questions batch | Ambiguities resolvable; documented as A1–A8 |
 | Raw/polished scratch files | Overhead; invites end-of-window reconstruction |
+| Paygate, confirm, cancellation, refunds, reaper, search | No window left after the stack first ran; concurrency core proven instead |
 
 ---
 

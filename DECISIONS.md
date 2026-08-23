@@ -119,6 +119,19 @@ from `docker compose` and a free tier from the deployment.
 
 ---
 
+### 10. A deadlock is a lost race, not an error
+**Chose:** Retry `40P01` inside `withTransaction`, and translate it to `409` if it survives
+the retry.
+**Rejected:** Letting it surface as a `500`, or serialising holds behind an advisory lock per
+room to prevent deadlocks arising at all.
+**Trade-off:** A retry means the hold path can run its transaction more than once, so everything
+inside it must stay safe to replay — it is, because the victim is fully rolled back. Accepted
+because an advisory lock would put a second, hand-managed concurrency mechanism in front of the
+one the database already enforces, and the brief treats a lost race returning `500` as a
+failure. The exclusion constraint stays the only thing deciding who wins.
+
+---
+
 <!--
 Format:
 

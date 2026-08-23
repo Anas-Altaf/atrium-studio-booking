@@ -325,3 +325,36 @@ sitting in `003` the whole time and would have been caught in ten seconds by a s
 
 **Result:** 7/7 isolation tests pass against a seeded database. The cross-venue hold now returns
 `404` and writes nothing.
+
+---
+
+### 16. First 200-request proof run — three more defects
+**Delegated:** Bring up three replicas behind nginx and run the concurrency proof.
+
+**Verdict:** `MODIFIED`
+
+**1. The stack never started.** `api-1`'s healthcheck was
+`wget http://localhost:3000/health`. Inside the container `localhost` resolves to `::1` first,
+and the server binds `0.0.0.0`, which is IPv4 only — so the check was refused, `api-1` stayed
+unhealthy, and `api-2`, `api-3` and nginx never started at all because they depend on it. Server
+logs said "listening" the whole time. Changed to `127.0.0.1`.
+
+**2. Deadlocks under real concurrency, surfacing as 500.** The first run returned 195 × 500 and
+5 × 504, zero successes. Cause: a GiST exclusion constraint at 200-way concurrency genuinely
+deadlocks — two transactions each place their index entry, then each scans, finds the other, and
+waits on the other's transaction, so Postgres kills one with `40P01`. The invariant was never at
+risk; the API's answer was. `40P01` is a lost race, and the brief requires a lost race to be a
+clean `409`. Retried in `withTransaction` (the victim is fully rolled back, so replay is safe)
+and translated to `409` if it survives. The pool was also the wrong size: every waiter holds a
+connection for the duration of the wait, so at `max: 10` the eleventh request could not get one
+and timed out. This is worth stating plainly — the correctness argument for the exclusion
+constraint was right, and it still returned 500s on first contact with 200 clients.
+
+**3. The proof's own fixture could not clean up.** It deleted the previous run's rows, which
+`audit_events` refuses: it holds a foreign key to every booking and migration `008` blocks
+`DELETE` whichever role is connected. The append-only guarantee blocking the test's own teardown
+is the guarantee working, so the fixture is per-run now — every object carries a run id and
+nothing is ever deleted.
+
+**Result:** proof passes. Phase A 1 × 201 and 199 × 409; phase B exactly 3 × 201 against 3 units
+owned and 197 × 409; zero 5xx in both; all three replicas served traffic.
