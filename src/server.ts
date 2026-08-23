@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import { ZodError } from 'zod';
 import { config } from './config.js';
@@ -15,7 +16,12 @@ export async function build() {
       level: process.env.LOG_LEVEL ?? 'info',
       base: { instance: config.instanceId },
     },
-    genReqId: () => '',
+    // The correlation id is the request id, so it appears on every log line
+    // this request produces without threading it through by hand.
+    genReqId: (req) => {
+      const h = req.headers['x-correlation-id'];
+      return typeof h === 'string' && h.length > 0 ? h : randomUUID();
+    },
   });
 
   await app.register(correlationPlugin);

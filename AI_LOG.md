@@ -237,3 +237,45 @@ may read. Different blast radius, same mechanism.
 **Not yet verified:** no Postgres was available in the environment where these were written, so
 the migrations are unexecuted at the time of this entry. Anything that fails on first run gets
 its own entry.
+
+---
+
+### 14. API core, compose stack, seed and concurrency proof
+**Delegated:** Write the application: pool, migration runner, `AuthScope`, hold endpoint,
+error translation, `docker compose` with three replicas behind nginx, the seed script, and the
+concurrency proof.
+
+**Verdict:** `MODIFIED` — four defects found on review, one of them serious.
+
+**1. Fastify encapsulation (would not have run).** The agent registered the auth plugin and
+the correlation plugin with `app.register()`. A decorator added inside a registered plugin
+lives in that plugin's encapsulation context and is invisible to siblings, so
+`app.authenticate` would not have existed where the routes are registered, and the correlation
+hook would have applied to nothing. Both now wrapped with `fastify-plugin`. This is the kind
+of error that reads as fine and fails at boot.
+
+**2. Append-only was documented but not active.** Migration `006` revokes `UPDATE` and `DELETE`
+on `audit_events` from `atrium_app` — correct in principle, and I accepted it when it was
+written. Reviewing the compose file afterwards I noticed the application connects as the
+*owner*, and an owner cannot be revoked from its own tables. The guarantee I had written into
+`ARCHITECTURE.md` §3.5 as "a database guarantee, not a code convention" was protecting nothing
+in the system as configured. Added migration `008`: triggers that reject the mutation whichever
+role is connected. Both kept — the privilege is right for production, the trigger is the one
+actually fastened here.
+
+**3. Duplicate equipment lines.** Two line items naming the same equipment type would each be
+capacity-checked against a peak not yet including the other, then collide on
+`UNIQUE (booking_id, equipment_type_id)`. Now merged before any check runs.
+
+**4. Request id.** The correlation id was assigned by mutating `req.id` in a hook rather than
+through `genReqId`, so log lines would not have carried it. Moved.
+
+**What the agent got right and I kept:** locking `equipment_types` in a fixed id order before
+inserting the booking. I had not asked for it and had not thought about deadlock — two holds
+naming the same two equipment types in opposite orders would deadlock without it.
+
+**Where I corrected the proof it wrote.** Its first version fired all 200 requests at the same
+room *and* the same equipment type. That passes while proving nothing about equipment: the
+room exclusion constraint rejects 199 of them before the equipment check runs. Split into two
+phases, with phase B using 200 distinct rooms so that the only thing able to limit the run is
+the equipment check.

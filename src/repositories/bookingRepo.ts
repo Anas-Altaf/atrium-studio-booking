@@ -45,16 +45,21 @@ export async function createHold(
   scope: AuthScope,
   req: HoldRequest,
 ): Promise<BookingRow> {
+  // Two line items naming the same equipment type would each be checked
+  // against a peak that does not yet include the other, and would then collide
+  // on UNIQUE (booking_id, equipment_type_id). Merged before anything else.
+  const request: HoldRequest = { ...req, equipment: mergeLines(req.equipment) };
+
   return withTransaction({ actorId: scope.userId, reason: 'hold created' }, async (tx) => {
-    const room = await loadRoomForBooking(tx, req.roomId);
+    const room = await loadRoomForBooking(tx, request.roomId);
     if (!room) throw notFound('room not found');
 
-    validateInterval(req.startAt, req.endAt, room.min_duration_min, room.max_duration_min);
-    await assertInsideOperatingHours(tx, room.venue_id, req.startAt, req.endAt);
+    validateInterval(request.startAt, request.endAt, room.min_duration_min, room.max_duration_min);
+    await assertInsideOperatingHours(tx, room.venue_id, request.startAt, request.endAt);
 
     // Equipment must belong to the room's venue (A6), and locking happens
     // before the booking insert, in id order (see note above).
-    const typeIds = [...new Set(req.equipment.map((e) => e.equipmentTypeId))].sort();
+    const typeIds = request.equipment.map((e) => e.equipmentTypeId).sort();
     const locked = typeIds.length
       ? await lockEquipmentTypes(tx, typeIds, room.venue_id)
       : [];
@@ -63,14 +68,14 @@ export async function createHold(
       throw badRequest('UNKNOWN_EQUIPMENT', 'Equipment does not belong to this venue.');
     }
 
-    for (const line of req.equipment) {
+    for (const line of request.equipment) {
       const type = locked.find((t) => t.id === line.equipmentTypeId)!;
-      await assertEquipmentAdmissible(tx, type, line.quantity, req.startAt, req.endAt);
+      await assertEquipmentAdmissible(tx, type, line.quantity, request.startAt, request.endAt);
     }
 
     const policyVersionId = await currentPolicyVersion(tx, room.venue_id);
     const expiresAt = new Date(Date.now() + config.holdTtlMinutes * 60_000).toISOString();
-    const totalMinor = priceOf(room, locked, req);
+    const totalMinor = priceOf(room, locked, request);
 
     const [booking] = await tx.query<BookingRow>(
       `INSERT INTO bookings
@@ -79,11 +84,11 @@ export async function createHold(
        VALUES ($1, $2, $3, 'HELD', $4, $5, $6, $7, $8)
        RETURNING id, venue_id, room_id, user_id, status,
                  start_at, end_at, expires_at, policy_version_id, total_minor`,
-      [room.venue_id, req.roomId, scope.userId, req.startAt, req.endAt,
+      [room.venue_id, request.roomId, scope.userId, request.startAt, request.endAt,
        expiresAt, policyVersionId, totalMinor],
     ).then((r) => r.rows);
 
-    for (const line of req.equipment) {
+    for (const line of request.equipment) {
       const type = locked.find((t) => t.id === line.equipmentTypeId)!;
       await tx.query(
         `INSERT INTO booking_line_items
@@ -95,6 +100,16 @@ export async function createHold(
 
     return booking!;
   });
+}
+
+function mergeLines(
+  lines: HoldRequest['equipment'],
+): HoldRequest['equipment'] {
+  const totals = new Map<string, number>();
+  for (const l of lines) {
+    totals.set(l.equipmentTypeId, (totals.get(l.equipmentTypeId) ?? 0) + l.quantity);
+  }
+  return [...totals].map(([equipmentTypeId, quantity]) => ({ equipmentTypeId, quantity }));
 }
 
 interface RoomRow {

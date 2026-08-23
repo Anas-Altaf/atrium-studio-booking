@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import jwt from '@fastify/jwt';
+import fp from 'fastify-plugin';
 import { config } from '../config.js';
 import type { AuthScope, Role } from './scope.js';
 import { unauthorized } from '../errors.js';
@@ -13,7 +14,14 @@ declare module 'fastify' {
 
 interface TokenPayload { sub: string; role: Role; venueId: string | null }
 
-export async function authPlugin(app: FastifyInstance): Promise<void> {
+/**
+ * Wrapped with fastify-plugin deliberately. A decorator added inside a normal
+ * app.register() lives in that plugin's encapsulation context and is invisible
+ * to sibling plugins, so app.authenticate would not exist where the routes are
+ * registered. fastify-plugin breaks the encapsulation so it attaches to the
+ * root instance.
+ */
+export const authPlugin = fp(async function authPlugin(app: FastifyInstance): Promise<void> {
   await app.register(jwt, { secret: config.jwtSecret });
 
   app.decorateRequest('scope', null);
@@ -36,4 +44,4 @@ export async function authPlugin(app: FastifyInstance): Promise<void> {
       venueId: payload.venueId ?? null,
     };
   });
-}
+});

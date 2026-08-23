@@ -46,6 +46,9 @@ export function translatePgError(err: unknown): AppError | undefined {
     case 'ATR01':
       return conflict('ILLEGAL_TRANSITION', e.message ?? 'illegal state transition');
 
+    case 'ATR02':
+      return conflict('APPEND_ONLY', e.message ?? 'this table is append-only');
+
     case '23505':
       switch (e.constraint) {
         case 'one_live_charge_per_booking':
