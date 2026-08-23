@@ -32,6 +32,39 @@ Health check, which asks the database a question rather than reporting that the 
 curl localhost:8080/health
 ```
 
+---
+
+## Deployed
+
+| | |
+|---|---|
+| API | https://atrium-api-c88i.onrender.com |
+| Frontend | _pending_ |
+| Database | Neon, free tier |
+
+```bash
+curl https://atrium-api-c88i.onrender.com/health
+npm run verify:deployed
+```
+
+`verify:deployed` runs 13 checks over the wire against the live instance — venue scoping on
+`/rooms`, a hold refused across venues, INV-6 by direct booking UUID, and the error shape. It
+is separate from `npm test`, which runs in process against a local database and therefore does
+not exercise TLS to Neon, the proxy in front, or a cold start.
+
+The test logins below work against it, `admin.b@atrium.test` included, so cross-venue isolation
+can be checked on the deployed instance rather than only in the suite.
+
+**The deployed API is one process. The concurrency proof runs against three.** Deliberate, and
+not a weaker configuration in the sense that matters: neither invariant is enforced in
+application memory, so replica count changes throughput and lock-wait distribution and nothing
+else. A request landing on one replica contends through the same index entry and the same row
+lock it would contend with in a single process — §3.3. Three replicas on a free tier would prove
+nothing `docker compose` does not already prove.
+
+Render's free tier sleeps after 15 minutes idle; the first request after that pays a 30–60
+second cold start.
+
 ### Test logins
 
 All use password `atrium123`.
@@ -124,10 +157,11 @@ What now holds, against a seeded database and three replicas behind nginx:
 | Concurrency proof (`npm run proof`) | Phase A: 1 × 201, 199 × 409. Phase B: exactly 3 × 201 against 3 units owned, 197 × 409. Zero 5xx in both. All three replicas served traffic |
 | Tenant isolation (`npm test`) | 7/7. A venue A admin holding a venue B room by direct UUID gets 404 and no row is written |
 | Migrations | 001–008 apply clean from empty |
-| Seed | `--profile=demo`, 24,675 bookings |
+| Seed | `--profile=demo`, 24,675 bookings locally and on Neon |
+| Deployed instance (`npm run verify:deployed`) | 13/13. Includes INV-6 by direct UUID against the live API |
 
-**Still not deployed.** This is the one hard cap not met, and it is not met for want of time
-rather than for want of a plan — see the hosting note below.
+**The API is deployed and seeded.** The frontend is not yet, so the "frontend and API both
+live" requirement is only half met.
 
 ### Real defects
 
