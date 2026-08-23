@@ -102,12 +102,13 @@ costs a great deal.
 | **INV-3, INV-4, INV-5** | Enforced at the schema level (`one_live_charge_per_booking`, `one_live_refund_per_booking`) but not exercised, because nothing calls Paygate yet | §4, §4C |
 | **Cancellation and refund calculation** | Not built. Policy versioning is migrated and every booking already carries its `policy_version_id`, so the terms are frozen correctly — nothing reads them yet | §4B, §4C |
 | **The reaper** | Not built. `bookings_reaper_idx` exists for it. Consequence: expired holds keep blocking their slot indefinitely rather than for ~15 seconds | §3.4 |
-| **Cross-venue search endpoint** | The query and its indexes are designed and migrated (§5); the route is not written |
-| **`--profile=full` and the benchmark** | Not run, so there are no p50/p95/p99 numbers. [`LOAD_TEST.md`](./LOAD_TEST.md) records the four targets, what was measured on the demo profile instead, why that cannot settle the §5 indexing question, and how I would measure it. One finding there — `rooms_search_idx` has never been used — is worth reading |
-| **Frontend** | Not built |
+| **`--profile=full` and the benchmark** | Not run. No p50/p95/p99 numbers. Targets and method in [`LOAD_TEST.md`](./LOAD_TEST.md) |
 | **Everything in Tier 2 and Tier 3** | Not started. This was deliberate — see `TIMELINE.md` |
 
-### Verified, and what verifying cost
+Built but not deployed: the frontend in `web/`. One page — log in, search rooms, hold, see the
+409. It is a demo surface over the API, not a product.
+
+### Verified
 
 The database was not available in the environment where most of this was written, so
 **migrations 001–008 and the application had not been executed at the time this section was

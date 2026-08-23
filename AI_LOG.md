@@ -285,32 +285,25 @@ the equipment check.
 ### 15. First migration run
 **Delegated:** Bring the stack up under `docker compose` and fix whatever blocks the hard caps.
 
-**Verdict:** `MODIFIED` — three defects, the first one mine.
+**Verdict:** `MODIFIED` — three defects.
 
-**The schema had never been able to migrate.** `003` died on
-`generation expression is not immutable`. A generated column's expression must be IMMUTABLE and
-`timestamptz + interval` is only STABLE, because the same operator also does month and day
-arithmetic that depends on TimeZone. `timestamp + interval` is IMMUTABLE; that asymmetry is the
-bug. A fixed 15 minutes never touches timezone rules, so an IMMUTABLE wrapper is accurate rather
-than a workaround — checked under UTC, `Europe/London` across a DST boundary, and
-`Asia/Karachi` before accepting it. Every later migration then applied unchanged.
+**`003` could never have migrated.** A generated column's expression must be IMMUTABLE, and
+`timestamptz + interval` is only STABLE because that operator also does month and day
+arithmetic. A fixed 15 minutes does none, so an IMMUTABLE wrapper is accurate rather than a
+workaround. Checked under UTC, `Europe/London` across a DST boundary, and `Asia/Karachi`.
 
-**`createHold` had no venue check.** `assertVenueWritable` was imported into the repository,
-re-exported from it, and called by nothing, so a `VENUE_ADMIN` could hold another venue's room
-and get a `201`. That is hard cap 3. The helper is also the wrong test: it returns false for a
-`CUSTOMER`, who has no venue and must be able to book anywhere. The predicate is that only
-venue-scoped roles are confined. Answered `404`, not `403`, so it cannot be used to enumerate
-room ids (A8).
+**`createHold` had no venue check** — hard cap 3. `assertVenueWritable` was imported,
+re-exported and never called, and is the wrong test anyway: it returns false for a `CUSTOMER`,
+who has no venue and must book anywhere. Only venue-scoped roles are confined. Answered `404`,
+not `403`, so it cannot enumerate room ids (A8).
 
-**The test for that cap could not have caught it.** It asserted `400 <= status < 500`, and the
-exclusion constraint returns `409` whenever the seeded room is busy — so it would have passed
-against an unauthorised booking about half the time. Now `403 | 404` plus an assertion that no
-row was written. Two fixtures were also ordered by a `created_at` that is identical on every
-seeded venue, since the seed inserts them in one transaction.
+**The test for that cap asserted `400 <= status < 500`,** which a `409` from the exclusion
+constraint satisfies — it would have passed against an unauthorised booking. Now `403 | 404`
+plus an assertion that no row was written. Two fixtures were also ordered by a `created_at`
+that is identical on every seeded venue.
 
-**Where I was wrong:** entry 13 recorded the migrations as unverified, and I then let `008` and
-the isolation test be built on top of a schema that had never once run. One execution would have
-found the immutability failure immediately.
+**Mine:** entry 13 recorded the migrations as unverified, and I then built `008` and the
+isolation test on a schema that had never run.
 
 ---
 
@@ -319,99 +312,66 @@ found the immutability failure immediately.
 
 **Verdict:** `MODIFIED` — three defects.
 
-**The stack never started.** `api-1`'s healthcheck used `http://localhost:3000/health`. Inside
-the container `localhost` resolves to `::1`, the server binds `0.0.0.0`, and the check was
-refused — so `api-1` stayed unhealthy and the other two replicas and nginx never started, while
-the logs said "listening". Changed to `127.0.0.1`.
+**The stack never started.** The healthcheck used `localhost`, which resolves to `::1` inside
+the container while the server binds `0.0.0.0`. `api-1` stayed unhealthy, so the other two
+replicas and nginx never started.
 
-**Deadlocks answered `500`.** First run: 195 × 500, zero successes. A GiST exclusion constraint
-at 200-way concurrency genuinely deadlocks — two inserts place their index entries, then each
-scans, finds the other, and waits on it, so Postgres kills one with `40P01`. The invariant was
-never at risk; the response code was. A deadlock is a lost race, and the brief requires a lost
-race to be a clean `409`. Retried in `withTransaction` — the victim is fully rolled back, so
-replay is safe — and translated if it survives. The pool was also too small at 10: every waiter
-holds a connection for the length of its wait.
+**Deadlocks answered `500`.** A GiST exclusion constraint at 200-way concurrency deadlocks: two
+inserts place their index entries, then each waits on the other, and Postgres kills one with
+`40P01`. The invariant was never at risk, the status code was. A deadlock is a lost race and
+must be `409`. Retried in `withTransaction` — the victim is fully rolled back — then
+translated. The pool was also too small at 10: every waiter holds a connection.
 
-**The fixture could not clean up after itself.** It deleted the previous run's rows, which
-`audit_events` refuses — it holds a foreign key to every booking and `008` blocks the delete
-whichever role is connected. That is the guarantee working, so the fixture is per-run now and
-deletes nothing.
+**The fixture deleted the previous run's rows,** which `audit_events` refuses. Per-run fixtures
+instead, deleting nothing.
 
 ---
 
 ### 17. Deployment preparation
-**Delegated:** Prepare Neon, Render and Vercel — CORS, TLS, a service definition, a frontend.
+**Delegated:** CORS, TLS to a managed Postgres, a Render service definition, a frontend.
 
-**Verdict:** `MODIFIED` — the buildable parts are done; the parts needing accounts are not mine.
+**Verdict:** `MODIFIED`
 
-**`@fastify/cors` installed at the wrong major.** `npm install` resolves it to v11, which
-declares `fastify: '5.x'` in its plugin metadata against our Fastify 4.29 — registration would
-have thrown at boot. The package declares no `peerDependencies`, so npm installed it silently.
-Pinned to `^8.5.0`.
+**`@fastify/cors` resolves to v11,** which declares `fastify: '5.x'` against our 4.29 and would
+have thrown at boot. It declares no `peerDependencies`, so npm installed it silently. Pinned to
+`^8.5.0`.
 
-**An unset `CORS_ORIGINS` means `origin: false`, not `origin: true`.** A missing variable
-should not make the API trust every origin. Verified: preflight from the Vercel origin answers
-`204` with `authorization` allowed, and an untrusted origin gets no header at all.
+**An unset `CORS_ORIGINS` means `origin: false`,** not `true`. Verified: `204` from the
+allowed origin with `authorization` permitted, no header at all for others.
 
-**TLS is derived from the host, not from a flag.** `node-postgres` does not enable TLS by
-default and Neon refuses plaintext, so the deployed instance would fail at boot. A `SSL=true`
-variable is one more thing to forget; the pool decides from the hostname instead. **Unproven
-against Neon** — there is no connection string yet, and I am not recording it as working until
-it has connected once.
+**TLS is derived from the hostname,** not from a flag that can be forgotten. Unproven against
+Neon — there is no connection string yet.
 
-**The frontend needed an endpoint that did not exist.** There was no way to list rooms, so
-rather than stub one, built the cross-venue search from ARCHITECTURE §5 — cheap predicates on
-`rooms` first, availability `NOT EXISTS` last. A customer sees all 8 seeded venues, a venue
-admin sees exactly one, so INV-6 holds there too.
+**Nothing listed rooms,** so the frontend had nothing to call. Built the cross-venue search from
+§5 rather than a stub. A customer sees all 8 seeded venues, a venue admin sees one.
 
-**Blocked:** creating the Neon, Render and Vercel accounts is not something an agent should do
-on my behalf, so seeding Neon and the live URLs wait on me.
+**Blocked:** the Neon, Render and Vercel accounts.
 
 ---
 
-### 18. A proof regression that was not one
-**Delegated:** The proof started failing after a rebuild — 502s and 504s, only one replica
-answering. Find it.
+### 18. Proof failing after a rebuild
+**Delegated:** The proof started returning 502 and 504 after a rebuild. Find it.
 
-**Verdict:** `MODIFIED` — two wrong diagnoses before one measurement.
+**Verdict:** `MODIFIED`
 
-First guess was stale `HELD` rows from earlier runs piling into the exclusion index. Second was
-pool exhaustion, on the strength of a `timeout exceeded when trying to connect` in the logs.
-Both were plausible and both were wrong.
+`docker compose up --build` recreated `api-1/2/3` with new container IPs and left `lb`
+running. nginx resolves its upstreams once at startup and caches them, so it was proxying to
+addresses that no longer existed. `docker compose restart lb`, and the proof passed 10/10.
 
-Measuring settled it in one query: 7 `HELD` rows in the whole database, and a single hold
-returning `201` in 99 ms. Nothing was slow.
-
-The actual cause was `docker compose up --build`, which recreated `api-1/2/3` with new
-container IPs but left `lb` running. nginx resolves its upstreams once at startup and caches
-them, so it was proxying to addresses that no longer existed. `docker compose restart lb` and
-the proof passed 10/10.
-
-**Worth keeping:** the two failed diagnoses were both consistent with the symptom, and the
-number that killed them — 7 held rows — took less time to get than either theory took to
-construct.
+**Mine:** I guessed twice before measuring — stale `HELD` rows, then pool exhaustion. Both fit
+the symptom. One query ended it: 7 held rows in the database, and a single hold returning `201`
+in 99 ms.
 
 ---
 
-### 19. LOAD_TEST.md with no load test in it
-**Delegated:** Fill `LOAD_TEST.md`, which was empty and is a named deliverable, without
-inventing numbers.
+### 19. LOAD_TEST.md
+**Delegated:** Fill the file, which was empty and is a named deliverable, without inventing
+numbers.
 
-**Verdict:** `ACCEPTED`
+**Verdict:** `MODIFIED` — first draft rejected, mine.
 
-Nothing to override — the constraint was the point, and the useful part was deciding what
-counts as evidence when the benchmark was never run. Recording the four targets and "not run"
-against each is honest but worth little on its own. What made the file worth having was
-measuring what *could* be measured on the demo profile and being explicit about its limits.
-
-Two results came out of that, and one changed my mind. `rooms_search_idx` has
-`idx_scan = 0` — the composite index §5 argued for carefully has never been used. The planner
-drives the search from the amenities GIN and filters city, capacity and price on the heap.
-
-The temptation was to write that up as the index being wrong. It is not: 64 rooms is two heap
-blocks, and at that size no index choice can lose. The correct conclusion is narrower and less
-satisfying — demo scale cannot answer the question §5 asked, and reading this plan as an answer
-would be the error. That distinction is most of what the file is for.
-
-The other result, 12,740 rows discarded per equipment check, needs no benchmark to act on and
-is now first on the §8 list after the payment path.
+The first version ran `EXPLAIN` on the demo profile and wrote it up at length. No numbers were
+invented, but presenting query plans from a 64-room database as the substance of a load test
+dresses up work that was not done. Cut to the four targets, why the benchmark was not run, and
+how I would run it. The two plans worth keeping were already recorded in ARCHITECTURE §5 and
+§7.2 and are referenced from there rather than repeated.
