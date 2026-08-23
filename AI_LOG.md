@@ -375,3 +375,30 @@ invented, but presenting query plans from a 64-room database as the substance of
 dresses up work that was not done. Cut to the four targets, why the benchmark was not run, and
 how I would run it. The two plans worth keeping were already recorded in ARCHITECTURE §5 and
 §7.2 and are referenced from there rather than repeated.
+
+---
+
+### 20. Deploying found a bug the test suite could not
+**Delegated:** Deploy to Neon and Render, then verify the live instance.
+
+**Verdict:** `MODIFIED`
+
+**Neon and TLS worked.** `/health` on the deployed instance returns `database: reachable` and
+`migrationsApplied: 8`, so the host-derived TLS in entry 17 is now proven rather than asserted.
+
+**A validation failure returned 500.** Posting a malformed login body to the deployed API gave a
+`500` carrying the raw Zod issue list. `setErrorHandler` was registered after the route plugins,
+and `app.register()` gives a plugin its own encapsulation context that captures the error handler
+in force at that moment — so the custom handler never applied to any route. Zod errors have no
+`statusCode`, so Fastify's default handler made them 500s, and no error response ever carried a
+`correlationId`. `AppError` responses only looked correct by coincidence, because `AppError`
+carries `statusCode` and `code` and Fastify's default serializer uses both.
+
+This is the same encapsulation trap as entry 14, in a second place, three commits after I wrote
+that entry.
+
+**Why the suite missed it:** every test asserted on `res.statusCode` and none on the body. The
+isolation tests checked that a 404 body did not contain a booking id, which passes whichever
+handler produced it. Added `tests/error-mapping.test.ts`, which asserts the shape and the
+correlation id, including that a caller-supplied `x-correlation-id` reaches both the body and
+the response header.
