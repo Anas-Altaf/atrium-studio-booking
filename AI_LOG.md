@@ -402,3 +402,31 @@ isolation tests checked that a 404 body did not contain a booking id, which pass
 handler produced it. Added `tests/error-mapping.test.ts`, which asserts the shape and the
 correlation id, including that a caller-supplied `x-correlation-id` reaches both the body and
 the response header.
+
+---
+
+### 21. Frontend
+**Delegated:** Replace the plain HTML page with a Next.js app, without adding dependencies
+beyond what the framework brings.
+
+**Verdict:** `MODIFIED`
+
+**Started by hand-writing the scaffold** — package.json, tsconfig, layout — when
+`create-next-app` does exactly that in one command. Corrected before it went anywhere, but it
+was wasted motion and the wrong instinct: reach for the tool the ecosystem already has.
+
+**Two type errors found by reading rather than by compiling.** The response logger took
+`ApiResult<unknown>` and returned it, so every caller lost the type of its own payload and
+`setRooms(r.data)` would not have compiled. Made generic. Separately `React.ReactNode` was
+used for the layout props without importing React, which the modern JSX transform does not
+provide. A third — spreading `init.headers` into a header object, where `HeadersInit` is a
+union that does not spread safely — was removed by narrowing the parameter, since no caller
+passes headers.
+
+**Not verified.** `npm install` has not been run in `web/`, so no build, no lint and no browser
+check. The three fixes above came from reading the code. Until a build runs, "it compiles" is a
+claim I have not earned.
+
+**Design note worth keeping:** the page shows the number of distinct venues in a search result.
+That is the cheapest possible demonstration of INV-6 — a customer sees eight, a venue admin sees
+one, and the difference is produced by the API rather than by the page hiding rows.

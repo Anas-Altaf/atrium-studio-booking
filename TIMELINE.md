@@ -124,6 +124,24 @@ method — nothing more. The first draft padded it with demo-profile query plans
 One false alarm: the proof returned 502s after a rebuild. nginx had cached upstream IPs for
 containers that were recreated under it. AI_LOG 18.
 
+### Aug 23 · 12:00–13:00 — Deployed the API, replaced the frontend
+
+API is live on Render against Neon and seeded to the demo profile. `npm run verify:deployed`
+runs 13 checks over the wire — venue scoping, a cross-venue hold refused, INV-6 by direct
+booking UUID, and the error shape. All pass, so hard cap 3 now holds on the deployed instance
+and not only in the suite.
+
+Deploying immediately found a defect the suite could not: a schema violation returned `500`
+with the raw Zod output, because `setErrorHandler` was registered after the route plugins and
+never reached a route. Every test asserted on status and none on the body. Fixed, and
+`tests/error-mapping.test.ts` now asserts the shape.
+
+Replaced the plain HTML page with a Next.js app — App Router, TypeScript, Tailwind, nothing
+else. It is still a demo surface, per DECISIONS 2.
+
+**Open:** the frontend is unbuilt and undeployed. `npm install` has not run in `web/`, so
+nothing there has been compiled or opened in a browser.
+
 ---
 
 ## Cuts

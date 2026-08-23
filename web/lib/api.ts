@@ -63,7 +63,7 @@ export interface ApiResult<T> {
 
 async function call<T>(
   path: string,
-  init: RequestInit = {},
+  init: Omit<RequestInit, "headers"> = {},
   token?: string | null,
 ): Promise<ApiResult<T>> {
   const started = performance.now();
@@ -75,7 +75,6 @@ async function call<T>(
       headers: {
         "content-type": "application/json",
         ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...(init.headers ?? {}),
       },
     });
   } catch {
