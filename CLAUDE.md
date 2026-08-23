@@ -199,6 +199,12 @@ terms of an already CONFIRMED booking.
 
 ## 10. Code conventions
 
+- **Stack:** TypeScript + Fastify + `node-postgres`. **No ORM, no query builder.** SQL is
+  hand-written in repository classes; migrations are plain `.sql` files. Do not introduce
+  Prisma, TypeORM, Drizzle or Kysely — see `DECISIONS.md` §5.
+- **Parameterized queries only.** `$1`, `$2` placeholders. Never build SQL by string
+  concatenation or template interpolation of user input, in any code path, including seeds
+  and scripts.
 - **Layered.** Routes → service → repository. No SQL in route handlers.
 - **Database errors are translated at the repository boundary.** Postgres error codes never
   leak upward as raw exceptions.

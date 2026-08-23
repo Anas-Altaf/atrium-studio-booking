@@ -46,6 +46,14 @@ the score and §1, §2, §5, §7, §8 are still stubs; writing schema before the
 machine are settled would mean migrating twice. Order: finish architecture → decide stack →
 build.
 
+### Aug 23 · 07:00–08:00 — Stack decided
+TypeScript + Fastify + Postgres, no ORM and no query builder — plain `pg` with hand-written
+SQL in repository classes and plain `.sql` migrations. Five entries written to DECISIONS.md.
+
+The order mattered: because the concurrency strategy was fixed first, Postgres was a
+consequence of INV-1 rather than a preference, and Prisma was ruled out on what it cannot
+express rather than on taste.
+
 ---
 
 ## Cuts

@@ -90,3 +90,24 @@ with that design in hand, then build.
 
 **Also added:** a logging cadence to CLAUDE.md §11, so the graded files are updated after
 every work block rather than at the end.
+
+---
+
+### 7. Stack proposal
+**Delegated:** Propose a stack, given the design already fixed in ARCHITECTURE.md §3.
+
+**Returned:** TypeScript + Fastify + Postgres, with Kysely as the query layer and plain SQL
+migrations. Prisma ruled out because it cannot express exclusion constraints, generated
+columns, triggers or `REVOKE`.
+
+**Verdict:** `MODIFIED`
+
+**What I changed:** The Prisma reasoning is right and I kept it. I dropped Kysely as well. It
+needs codegen setup I have not used, and there is a live defense in which I have to navigate
+and change this codebase from memory — a repository file holding the literal SQL is easier to
+work with under that constraint than a builder API I would be learning today. Going with plain
+`pg` and hand-written SQL, with parameterized queries, row interfaces and a test per
+repository method as the mitigations.
+
+**Worth recording separately:** settling the architecture first meant the stack was
+constrained rather than chosen. Postgres is a consequence of INV-1, not a preference.
