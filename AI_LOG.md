@@ -390,3 +390,28 @@ the proof passed 10/10.
 **Worth keeping:** the two failed diagnoses were both consistent with the symptom, and the
 number that killed them — 7 held rows — took less time to get than either theory took to
 construct.
+
+---
+
+### 19. LOAD_TEST.md with no load test in it
+**Delegated:** Fill `LOAD_TEST.md`, which was empty and is a named deliverable, without
+inventing numbers.
+
+**Verdict:** `ACCEPTED`
+
+Nothing to override — the constraint was the point, and the useful part was deciding what
+counts as evidence when the benchmark was never run. Recording the four targets and "not run"
+against each is honest but worth little on its own. What made the file worth having was
+measuring what *could* be measured on the demo profile and being explicit about its limits.
+
+Two results came out of that, and one changed my mind. `rooms_search_idx` has
+`idx_scan = 0` — the composite index §5 argued for carefully has never been used. The planner
+drives the search from the amenities GIN and filters city, capacity and price on the heap.
+
+The temptation was to write that up as the index being wrong. It is not: 64 rooms is two heap
+blocks, and at that size no index choice can lose. The correct conclusion is narrower and less
+satisfying — demo scale cannot answer the question §5 asked, and reading this plan as an answer
+would be the error. That distinction is most of what the file is for.
+
+The other result, 12,740 rows discarded per equipment check, needs no benchmark to act on and
+is now first on the §8 list after the payment path.

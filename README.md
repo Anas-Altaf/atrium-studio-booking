@@ -103,7 +103,7 @@ costs a great deal.
 | **Cancellation and refund calculation** | Not built. Policy versioning is migrated and every booking already carries its `policy_version_id`, so the terms are frozen correctly — nothing reads them yet | §4B, §4C |
 | **The reaper** | Not built. `bookings_reaper_idx` exists for it. Consequence: expired holds keep blocking their slot indefinitely rather than for ~15 seconds | §3.4 |
 | **Cross-venue search endpoint** | The query and its indexes are designed and migrated (§5); the route is not written |
-| **`--profile=full` and `LOAD_TEST.md`** | Not run. The seed script supports both profiles from one code path, but no benchmark was taken, so there are no p50/p95/p99 numbers and no EXPLAIN evidence. §5 therefore carries a strategy without measurements |
+| **`--profile=full` and the benchmark** | Not run, so there are no p50/p95/p99 numbers. [`LOAD_TEST.md`](./LOAD_TEST.md) records the four targets, what was measured on the demo profile instead, why that cannot settle the §5 indexing question, and how I would measure it. One finding there — `rooms_search_idx` has never been used — is worth reading |
 | **Frontend** | Not built |
 | **Everything in Tier 2 and Tier 3** | Not started. This was deliberate — see `TIMELINE.md` |
 

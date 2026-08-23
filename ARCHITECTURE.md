@@ -656,9 +656,19 @@ index-only probe of the partial GiST index per surviving room.
 
 ### Measurements
 
-*Pending — to be filled from `--profile=full` with EXPLAIN before and after, per §08 of the
-brief. If a target is missed, what was measured and what was tried is recorded rather than
-omitted.*
+`--profile=full` was not run and there are no p50/p95/p99 numbers. What was measured on the
+demo profile, and what it does and does not settle, is in [`LOAD_TEST.md`](./LOAD_TEST.md).
+
+Two results belong here because they bear on the plan predicted above.
+
+The availability anti-join behaved as expected: an `Index Only Scan` on the partial GiST index
+with a single heap fetch. That half of the design holds.
+
+The room filter did not. The planner drove the query from `rooms_amenities_idx` and pushed
+city, capacity and price down to a heap filter — and `rooms_search_idx` shows `idx_scan = 0`,
+meaning it has never been used at all. That is not evidence against the index: with 64 seeded
+rooms the whole table is two heap blocks and no index choice can lose. It does mean the open
+question above is still open, and that demo scale cannot close it.
 
 ---
 
