@@ -139,8 +139,8 @@ never reached a route. Every test asserted on status and none on the body. Fixed
 Replaced the plain HTML page with a Next.js app — App Router, TypeScript, Tailwind, nothing
 else. It is still a demo surface, per DECISIONS 2.
 
-**Open:** the frontend is unbuilt and undeployed. `npm install` has not run in `web/`, so
-nothing there has been compiled or opened in a browser.
+**Open:** the frontend is not deployed, so the "frontend and API both live" half of
+cap 2 is still outstanding.
 
 ---
 

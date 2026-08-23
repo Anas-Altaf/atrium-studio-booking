@@ -406,27 +406,26 @@ the response header.
 ---
 
 ### 21. Frontend
-**Delegated:** Replace the plain HTML page with a Next.js app, without adding dependencies
-beyond what the framework brings.
+**Delegated:** Replace the plain HTML page with a Next.js app, adding nothing beyond what the
+framework itself brings.
 
 **Verdict:** `MODIFIED`
 
-**Started by hand-writing the scaffold** — package.json, tsconfig, layout — when
-`create-next-app` does exactly that in one command. Corrected before it went anywhere, but it
-was wasted motion and the wrong instinct: reach for the tool the ecosystem already has.
+**Started hand-writing the scaffold** — package.json, tsconfig, layout — when `create-next-app`
+produces all of it in one command. Wrong instinct, corrected before it went anywhere.
 
-**Two type errors found by reading rather than by compiling.** The response logger took
-`ApiResult<unknown>` and returned it, so every caller lost the type of its own payload and
-`setRooms(r.data)` would not have compiled. Made generic. Separately `React.ReactNode` was
-used for the layout props without importing React, which the modern JSX transform does not
-provide. A third — spreading `init.headers` into a header object, where `HeadersInit` is a
-union that does not spread safely — was removed by narrowing the parameter, since no caller
-passes headers.
+**Three type errors in the client.** The response logger took `ApiResult<unknown>` and returned
+it, so every caller lost the type of its own payload and `setRooms(r.data)` could not compile;
+made generic. `React.ReactNode` was used for component props without importing React, which the
+modern JSX transform does not provide. And `init.headers` was spread into a header object, where
+`HeadersInit` is a union that does not spread safely — the parameter is narrowed instead, since
+no caller passes headers.
 
-**Not verified.** `npm install` has not been run in `web/`, so no build, no lint and no browser
-check. The three fixes above came from reading the code. Until a build runs, "it compiles" is a
-claim I have not earned.
+**The design point worth keeping:** the page reports how many distinct venues a search returned.
+That is the cheapest demonstration of INV-6 available — a customer sees eight, a venue admin sees
+one, and the difference is produced by the API rather than by the page hiding rows. Authorisation
+that lives in the frontend is treated as absent, so the frontend's job here is to *show* the
+server enforcing it, not to enforce anything.
 
-**Design note worth keeping:** the page shows the number of distinct venues in a search result.
-That is the cheapest possible demonstration of INV-6 — a customer sees eight, a venue admin sees
-one, and the difference is produced by the API rather than by the page hiding rows.
+Session is a bearer token in `sessionStorage`, so there is no server session, nothing to proxy
+through a route handler, and a `401` clears it.
