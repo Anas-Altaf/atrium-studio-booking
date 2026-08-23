@@ -36,14 +36,30 @@ export default function RoomTable({
             <th className="py-2 font-medium">Venue</th>
           </tr>
         </thead>
-        <tbody>
+        {/*
+          The row is the control, so it has to behave like one: reachable by
+          tab, operable by Enter or Space, and announced with its selected
+          state. A bare onClick on a <tr> leaves the primary interaction on
+          this page unavailable to anyone not using a mouse.
+        */}
+        <tbody role="radiogroup" aria-label="Available rooms">
           {rooms.map((room) => {
             const selected = room.id === selectedId;
             return (
               <tr
                 key={room.id}
                 onClick={() => onSelect(room)}
-                className={`cursor-pointer border-t border-black/5 dark:border-white/10 ${
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelect(room);
+                  }
+                }}
+                tabIndex={0}
+                role="radio"
+                aria-checked={selected}
+                aria-label={`${room.name}, ${room.city}, capacity ${room.capacity}`}
+                className={`cursor-pointer border-t border-black/5 outline-offset-[-2px] dark:border-white/10 ${
                   selected
                     ? "bg-blue-50 dark:bg-blue-950/40"
                     : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
