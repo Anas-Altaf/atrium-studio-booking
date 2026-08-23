@@ -1,6 +1,6 @@
 import type { Tx } from '../db/pool.js';
 import { query, withTransaction } from '../db/pool.js';
-import { type AuthScope, assertVenueWritable, scopePredicate } from '../auth/scope.js';
+import { type AuthScope, assertVenueWritable, isVenueScoped, scopePredicate } from '../auth/scope.js';
 import { badRequest, conflict, notFound } from '../errors.js';
 import { config } from '../config.js';
 
@@ -53,6 +53,15 @@ export async function createHold(
   return withTransaction({ actorId: scope.userId, reason: 'hold created' }, async (tx) => {
     const room = await loadRoomForBooking(tx, request.roomId);
     if (!room) throw notFound('room not found');
+
+    // INV-6 on the write side. Only venue-scoped roles are confined to a venue:
+    // a CUSTOMER books anywhere and a PLATFORM_ADMIN is unrestricted, so the
+    // check is "is this caller bound to a different venue", not "does the venue
+    // match". 404 rather than 403, so the answer cannot be used to probe which
+    // room ids exist (A8).
+    if (isVenueScoped(scope) && scope.venueId !== room.venue_id) {
+      throw notFound('room not found');
+    }
 
     validateInterval(request.startAt, request.endAt, room.min_duration_min, room.max_duration_min);
     await assertInsideOperatingHours(tx, room.venue_id, request.startAt, request.endAt);

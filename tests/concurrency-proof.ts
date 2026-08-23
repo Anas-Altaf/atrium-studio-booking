@@ -176,22 +176,25 @@ function nextFreeSlot(): Slot {
  */
 async function setUpFixture() {
   const { rows: [venue] } = await db.query<{ id: string }>(
-    `SELECT id FROM venues ORDER BY created_at LIMIT 1`,
+    `SELECT id FROM venues ORDER BY created_at, id LIMIT 1`,
   );
   if (!venue) throw new Error('seed the database first: npm run seed');
 
-  await db.query(`DELETE FROM booking_line_items WHERE equipment_type_id IN
-                    (SELECT id FROM equipment_types WHERE name = 'PROOF Scarce Camera')`);
-  await db.query(`DELETE FROM bookings WHERE room_id IN
-                    (SELECT id FROM rooms WHERE name LIKE 'PROOF %')`);
-  await db.query(`DELETE FROM rooms WHERE name LIKE 'PROOF %'`);
-  await db.query(`DELETE FROM equipment_types WHERE name = 'PROOF Scarce Camera'`);
+  // Earlier versions of this fixture deleted the previous run's PROOF rows.
+  // That is not possible and should not be: audit_events holds a foreign key to
+  // every booking and is append-only, so deleting a booking would require
+  // deleting its audit rows, which migration 008 refuses whichever role is
+  // connected. The append-only guarantee blocking the test's own cleanup is the
+  // guarantee working, so the fixture is per-run instead: every object is
+  // tagged with a run id and nothing is ever removed. Rows accumulate across
+  // runs, which is what an audit trail is for.
+  const runId = Date.now().toString(36);
 
   const { rows: [equip] } = await db.query<{ id: string }>(
     `INSERT INTO equipment_types
        (venue_id, name, hourly_rate_minor, units_owned, overbooking_buffer)
-     VALUES ($1, 'PROOF Scarce Camera', 100000, 3, 0) RETURNING id`,
-    [venue.id],
+     VALUES ($1, $2, 100000, 3, 0) RETURNING id`,
+    [venue.id, `PROOF Scarce Camera ${runId}`],
   );
 
   const { rows: [city] } = await db.query<{ city: string }>(
@@ -200,8 +203,8 @@ async function setUpFixture() {
 
   const { rows: [contended] } = await db.query<{ id: string }>(
     `INSERT INTO rooms (venue_id, name, capacity, hourly_rate_minor, amenities, city)
-     VALUES ($1, 'PROOF Contended Room', 10, 500000, '{}', $2) RETURNING id`,
-    [venue.id, city!.city],
+     VALUES ($1, $2, 10, 500000, '{}', $3) RETURNING id`,
+    [venue.id, `PROOF Contended Room ${runId}`, city!.city],
   );
 
   const spreadRoomIds: string[] = [];
@@ -209,7 +212,7 @@ async function setUpFixture() {
     const { rows: [r] } = await db.query<{ id: string }>(
       `INSERT INTO rooms (venue_id, name, capacity, hourly_rate_minor, amenities, city)
        VALUES ($1, $2, 10, 500000, '{}', $3) RETURNING id`,
-      [venue.id, `PROOF Spread Room ${i}`, city!.city],
+      [venue.id, `PROOF Spread Room ${runId} ${i}`, city!.city],
     );
     spreadRoomIds.push(r!.id);
   }

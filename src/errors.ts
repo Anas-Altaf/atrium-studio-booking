@@ -46,6 +46,12 @@ export function translatePgError(err: unknown): AppError | undefined {
     case 'ATR01':
       return conflict('ILLEGAL_TRANSITION', e.message ?? 'illegal state transition');
 
+    // Retried before reaching here (see withTransaction). Still a lost race,
+    // and a lost race is a 409, never a 500.
+    case '40P01':
+    case '40001':
+      return conflict('CONTENTION', 'That slot is under contention. Retry.');
+
     case 'ATR02':
       return conflict('APPEND_ONLY', e.message ?? 'this table is append-only');
 

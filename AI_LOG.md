@@ -279,3 +279,49 @@ room *and* the same equipment type. That passes while proving nothing about equi
 room exclusion constraint rejects 199 of them before the equipment check runs. Split into two
 phases, with phase B using 200 distinct rooms so that the only thing able to limit the run is
 the equipment check.
+
+---
+
+### 15. First real migration run — three defects, one of them mine
+**Delegated:** Bring the stack up under `docker compose`, find out what actually fails, and
+close whatever blocks Tier 1's hard caps in the remaining window.
+
+**Verdict:** `MODIFIED`
+
+**1. The generated column never compiled (mine, not the agent's).** `docker compose up` died on
+`003` with `generation expression is not immutable`. `reserved_range` was written as
+`tstzrange(start_at, end_at + interval '15 minutes')`, and a generated column's expression must
+be IMMUTABLE — but `timestamptz + interval` is only STABLE, because the same operator also does
+month and day arithmetic, which depends on the session TimeZone. `timestamp + interval`, without
+the zone, is IMMUTABLE; that asymmetry is the whole bug. A fixed 15 minutes never touches
+timezone rules, so wrapping it in a function marked IMMUTABLE is accurate rather than a
+workaround. Verified before accepting it: same absolute instant under UTC, `Europe/London` across
+a DST boundary, and `Asia/Karachi`. This is the design decision in CLAUDE.md §3 — the turnaround
+as geometry — surviving contact with the database, and it stayed geometry.
+
+**2. Cross-venue authorisation was missing on the write side.** `assertVenueWritable` existed,
+was imported into the repository, was re-exported from it, and was called by nothing.
+`createHold` loaded the room by id with no scope check at all, so a `VENUE_ADMIN` of venue A
+could hold a room in venue B and receive a `201`. This sits directly under hard cap 3. The fix is
+not `assertVenueWritable` as written: that helper returns false for a `CUSTOMER`, who has no
+`venue_id` and must be able to book anywhere. The correct predicate is that only *venue-scoped*
+roles are confined — `isVenueScoped(scope) && scope.venueId !== room.venue_id` — answered `404`
+rather than `403` so the response cannot be used to enumerate room ids (A8).
+
+**3. The test written for that cap could not have caught it.** `tenant-isolation.test.ts`
+asserted only `400 <= status < 500` on the cross-venue hold. The room exclusion constraint
+returns `409` whenever the seeded room happens to be busy, so the test would have gone green
+against a completely unauthorised booking roughly half the time, depending on the seed. Tightened
+to `403 | 404` plus an assertion that no booking row exists afterwards. Two fixtures were also
+non-deterministic: venues were ordered by `created_at`, but the seed inserts them all in one
+transaction so `now()` is identical on every row and the tie broke arbitrarily — the fixture could
+hand venue A's booking to admin B and fail an otherwise correct system. Venues are now resolved
+through the admin accounts themselves.
+
+**Where I was wrong earlier.** Entry 13 records the migrations as unverified because no Postgres
+was available. That was accurate, but I then let `008` and the isolation test be written and
+reviewed on top of a schema that had never once been executed. The immutability failure was
+sitting in `003` the whole time and would have been caught in ten seconds by a single run.
+
+**Result:** 7/7 isolation tests pass against a seeded database. The cross-venue hold now returns
+`404` and writes nothing.

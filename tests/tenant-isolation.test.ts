@@ -32,20 +32,31 @@ beforeAll(async () => {
   adminB = await login('admin.b@atrium.test');
   customer = await login('customer@atrium.test');
 
+  // Resolved through the admin accounts themselves. Ordering venues by
+  // created_at is not deterministic: the seed inserts them all in one
+  // transaction, so now() is identical on every row and the tie is broken
+  // arbitrarily -- the fixture could hand venue A's booking to admin B.
   const { rows: venues } = await pool.query<{ id: string }>(
-    'SELECT id FROM venues ORDER BY created_at LIMIT 2',
+    `SELECT venue_id AS id FROM users
+     WHERE email = ANY($1::text[]) ORDER BY email`,
+    [['admin.a@atrium.test', 'admin.b@atrium.test']],
   );
   const [venueA, venueB] = venues;
-  if (!venueA || !venueB) throw new Error('seed the database first');
+  if (!venueA?.id || !venueB?.id) throw new Error('seed the database first');
 
+  // Must not belong to the customer under test, or the customer case below
+  // would be asserting against their own booking.
   venueBBookingId = (await one(
-    'SELECT id FROM bookings WHERE venue_id = $1 LIMIT 1', [venueB.id],
+    `SELECT b.id FROM bookings b
+     WHERE b.venue_id = $1
+       AND b.user_id <> (SELECT id FROM users WHERE email = 'customer@atrium.test')
+     ORDER BY b.id LIMIT 1`, [venueB.id],
   )).id;
   venueBRoomId = (await one(
-    'SELECT id FROM rooms WHERE venue_id = $1 LIMIT 1', [venueB.id],
+    'SELECT id FROM rooms WHERE venue_id = $1 ORDER BY id LIMIT 1', [venueB.id],
   )).id;
   venueABookingId = (await one(
-    'SELECT id FROM bookings WHERE venue_id = $1 LIMIT 1', [venueA.id],
+    'SELECT id FROM bookings WHERE venue_id = $1 ORDER BY id LIMIT 1', [venueA.id],
   )).id;
 });
 
@@ -89,8 +100,15 @@ describe('cross-venue isolation', () => {
         equipment: [],
       },
     });
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-    expect(res.statusCode).toBeLessThan(500);
+    // Not merely "some 4xx": a 409 from the room exclusion constraint would
+    // satisfy that while proving nothing about authorisation.
+    expect([403, 404]).toContain(res.statusCode);
+
+    const { rows } = await pool.query(
+      'SELECT 1 FROM bookings WHERE room_id = $1 AND user_id = $2',
+      [venueBRoomId, JSON.parse(Buffer.from(adminA.split('.')[1]!, 'base64url').toString()).sub],
+    );
+    expect(rows).toHaveLength(0);
   });
 
   it('a customer cannot read another user booking', async () => {

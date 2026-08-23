@@ -1,5 +1,24 @@
 -- 003  Bookings, equipment line items, and the room exclusion constraint.
 
+-- A generated column must be IMMUTABLE. The timestamptz + interval operator is
+-- only STABLE, because in the general case it does month and day arithmetic
+-- that depends on the session TimeZone across a DST boundary. A fixed 15 minute
+-- interval does none of that: it is exact microsecond arithmetic on the epoch
+-- value, with no timezone involved. Wrapping it in a function marked IMMUTABLE
+-- is therefore accurate rather than a workaround, and it is what lets the
+-- turnaround gap live in the geometry instead of in a validation branch.
+--
+-- Written inline first and rejected by Postgres on the first real migration run
+-- with 'generation expression is not immutable'. See AI_LOG entry 15.
+CREATE FUNCTION booking_reserved_range(start_at timestamptz, end_at timestamptz)
+RETURNS tstzrange
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $fn$
+  SELECT tstzrange($1, $2 + interval '15 minutes', '[)')
+$fn$;
+
 CREATE TABLE bookings (
   id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   venue_id          uuid           NOT NULL REFERENCES venues(id),
@@ -13,7 +32,7 @@ CREATE TABLE bookings (
   -- Range overlap is mutual, so extending only the tail enforces the gap on
   -- both sides, and no code path can bypass it. See ARCHITECTURE.md 3.1.
   reserved_range    tstzrange GENERATED ALWAYS AS (
-                      tstzrange(start_at, end_at + interval '15 minutes', '[)')
+                      booking_reserved_range(start_at, end_at)
                     ) STORED,
 
   expires_at        timestamptz,
