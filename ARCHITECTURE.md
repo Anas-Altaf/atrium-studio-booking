@@ -337,6 +337,41 @@ guarantee into a setting. See A10 for how genuine mistakes are handled instead.
 
 ---
 
+## 4C. Cancellation and refund idempotency
+
+The thing being made idempotent is not the refund call — it is **the cancellation**. A refund
+is a consequence of one, so if a booking can only be cancelled once, it can only be refunded
+once.
+
+That guarantee already exists. `CONFIRMED → CANCELLED` runs through the state machine trigger
+of §3.5, under the row lock Postgres takes for the update. Two clicks, on any two replicas,
+serialize behind that lock; the second finds the booking no longer in `CONFIRMED` and cannot
+repeat the transition. No new mechanism is introduced.
+
+**Closing the gap between the transition and the money.** If the transition committed and the
+call to Paygate then failed, the booking would be cancelled with no refund issued. So the
+refund is not called inline — the *intent* is written in the same transaction as the
+transition:
+
+```
+one transaction:
+  bookings      → CANCELLED         (trigger validates, writes AuditEvent)
+  refunds       → INSERT ... status = 'PENDING', amount from the booking's policy version
+```
+
+Both commit or neither does. A worker then drives the `PENDING` row to Paygate and may retry
+freely, because the `Idempotency-Key` is derived deterministically from the refund row's id.
+`UNIQUE (booking_id) WHERE status IN ('PENDING','SUCCEEDED')` on `refunds` is a second line of
+defence at the database level.
+
+This also covers INV-4's automatic refund: a late capture on an expired hold and a
+user-initiated cancel are both transitions out of the booking's current state, and only one of
+them can win.
+
+**Response to a repeated cancel:** `200` with the existing refund, not `409`. See A11.
+
+---
+
 ## 5. Indexing and query strategy
 
 *TBD — EXPLAIN ANALYZE evidence before and after, against `--profile=full`.*
@@ -370,6 +405,7 @@ incompatible as written and admit more than one reasonable resolution. Reasoning
 | A8 | Cross-venue access: 403 or 404? | **404** on reads, to avoid disclosing the existence of another venue's resources by ID. 403 is reserved for in-venue privilege failures (e.g. VENUE_STAFF attempting a pricing change). |
 | A9 | The brief protects an "already CONFIRMED" booking from a policy change, but does not say which policy applies if the tiers change between hold and confirmation. | The `policy_version_id` is captured at **hold creation**, not at confirmation. The customer is shown terms at checkout and pays against them within minutes; binding at confirmation could apply terms they were never shown. This is stricter than the brief requires, and never weaker. |
 | A10 | Policy versions are immutable, so a genuine admin mistake cannot be corrected for bookings already made under it. What happens then? | It is treated as an operations problem, not a schema one. The wrong version stays; the affected booking receives an explicit, audited adjustment recorded as its own money movement. Silently rewriting the policy would hide the correction from the reconciliation report, which INV-5 exists to make impossible. |
+| A11 | The brief requires a clean `409` for an illegal transition. Is cancelling an already-cancelled booking illegal? | **No — it returns `200` with the existing refund.** Read literally, an illegal transition is a `(from, to)` pair absent from the matrix. Asking for a state the booking is already in is not a transition at all; it is a replay of one that succeeded, and answering it with the original result is what idempotency means. `409` is reserved for a genuine request to move somewhere the machine does not allow, such as `CANCELLED → CONFIRMED`. The distinction is whether the caller is asking for the same outcome again or for a different one. |
 
 ## 7. What breaks at 100x
 

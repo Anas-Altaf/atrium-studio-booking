@@ -155,3 +155,26 @@ correction — `50% → 5%` is indistinguishable from a typo fix while taking mo
 who already booked — and that it would move the decision of whether a change is retroactive
 into the admin's hands, making the guarantee a setting. That argument changed my mind, and the
 operational-adjustment route it proposed instead became assumption A10.
+
+---
+
+### 10. Refund idempotency
+**Delegated:** How to guarantee that double-clicking cancel refunds once.
+
+**Returned:** Do not make the refund idempotent — make the cancellation idempotent, since the
+refund is a consequence of it. The `CONFIRMED → CANCELLED` transition already serializes under
+the state machine trigger's row lock, so no new mechanism is needed. Write the refund intent in
+the same transaction and let a worker drive it with a derived `Idempotency-Key`.
+
+**Verdict:** `ACCEPTED`
+
+**My reasoning for accepting:** Reframing the problem from "one refund" to "one cancellation"
+is what made it disappear — the guarantee was already built in §3.5 and I had been about to add
+a second mechanism beside it. The gap it then identified is real: if the transition commits and
+the Paygate call fails, the booking is cancelled with no money returned. Writing the intent in
+the same transaction closes that.
+
+**Where I pushed back:** it initially proposed `409` on a repeated cancel, following the
+brief's wording on illegal transitions. I read that wording literally — an illegal transition
+is a `(from, to)` pair absent from the matrix, and asking for a state the booking already holds
+is not a transition but a replay. Settled as `200` with the existing refund, recorded as A11.

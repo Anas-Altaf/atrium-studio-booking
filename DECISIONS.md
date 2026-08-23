@@ -93,6 +93,20 @@ mistakes are handled as audited per-booking adjustments instead — see assumpti
 
 ---
 
+### 8. Refund idempotency through the state machine, not a new mechanism
+**Chose:** Make the *cancellation* idempotent rather than the refund. `CONFIRMED → CANCELLED`
+already serializes under the state machine trigger's row lock, so only one cancel can succeed;
+the refund intent is inserted in that same transaction and driven to Paygate by a worker with
+an `Idempotency-Key` derived from the refund row id.
+**Rejected:** A client-supplied `Idempotency-Key` header on the cancel endpoint.
+**Trade-off:** Requires a worker and an outbox-style `refunds` row rather than a direct call,
+so the refund is eventually consistent rather than immediate. Accepted because a client key
+only works if the client generates it per intent rather than per click — a double-click in a
+naive UI produces two keys and two refunds. The database gate does not depend on client
+behaviour at all.
+
+---
+
 <!--
 Format:
 
