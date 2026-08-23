@@ -62,6 +62,37 @@ per query, and an integration test per repository method.
 
 ---
 
+### 6. Tenant isolation by mandatory repository scope
+**Chose:** Every repository method takes an `AuthScope` as its first parameter; there is no
+overload without it, so omitting the scope fails to compile.
+**Rejected:** Postgres row-level security.
+**Trade-off:** This is a compile-time guarantee, not a database one — a direct `psql`
+connection bypasses it. Accepted because RLS needs a per-request session variable, and a
+pooled connection returned with that variable still set would serve the next request under the
+previous tenant's scope. That is a new isolation failure created by the mechanism meant to
+prevent isolation failures, sitting behind a scoring hard cap. RLS also needs bypasses for
+`PLATFORM_ADMIN` and for the unscoped workers, and two policies per table because `CUSTOMER`
+scopes by `user_id` rather than `venue_id`. Listed in §8 as the next step.
+
+---
+
+### 7. Refund policy as immutable versions
+**Chose:** `refund_policy_versions` is append-only. An admin edit inserts a new version; every
+booking stores the `policy_version_id` in force at hold creation and the refund calculator
+reads terms through that reference.
+**Rejected:** Mutable policy rows with the terms copied onto each booking at confirmation.
+**Trade-off:** A join at refund time, and one more table. Accepted because the guarantee then
+holds structurally — the old rows still exist and the booking still points at them, so nothing
+has to remember to behave correctly — and policy history comes for free, consistent with how
+`audit_events` is already treated.
+
+Also rejected: letting an admin mark an edit as a "correction" that applies in place. The
+system cannot verify a claimed correction is one, and it would put the decision of whether a
+change is retroactive in the admin's hands, turning the guarantee into a setting. Genuine
+mistakes are handled as audited per-booking adjustments instead — see assumption A10.
+
+---
+
 <!--
 Format:
 

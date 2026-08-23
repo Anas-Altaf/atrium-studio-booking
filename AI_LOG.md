@@ -111,3 +111,47 @@ repository method as the mitigations.
 
 **Worth recording separately:** settling the architecture first meant the stack was
 constrained rather than chosen. Postgres is a consequence of INV-1, not a preference.
+
+---
+
+### 8. Tenant isolation mechanism
+**Delegated:** Propose a mechanism for INV-6, noting the architecture said nothing about it
+despite it being one of the three hard caps.
+
+**Returned:** Three options — per-query `WHERE venue_id`, Postgres RLS, or a mandatory scope
+parameter on every repository method — with the pooling hazard in RLS identified.
+
+**Verdict:** `ACCEPTED`
+
+**My reasoning for accepting:** The pooling argument decided it. RLS is the better fit for a
+design that otherwise pushes guarantees into the database, but a session variable left set on
+a returned connection serves the next request under the previous tenant's scope — a new
+isolation bug introduced by the isolation mechanism, on a capped invariant. The scope
+parameter moves the real failure (a forgotten `WHERE` on a late endpoint) to compile time
+without adding a failure mode. Its cost — no protection against a direct `psql` connection —
+is recorded rather than glossed over, and RLS is listed as the next step.
+
+---
+
+### 9. Refund policy — agent proposed complexity I cut
+**Delegated:** How to satisfy "policy is data" and "no retroactive change to a CONFIRMED
+booking" at the same time.
+
+**Returned:** Versioned policy rows with the booking holding a version pointer — and then,
+when I raised that an admin might need to fix a typo, a scheme where a version stays editable
+until the first booking references it and freezes thereafter.
+
+**Verdict:** `MODIFIED` — I took the versioning and cut the freezing rule.
+
+**What I overrode:** The copy-on-write rule is defensible but it buys very little for the
+machinery it adds: a second lifecycle for policy rows, a reference check on every edit, and a
+harder sentence to say in the live defense. Versions are simply immutable — every edit creates
+a new one. A mistake caught before any booking exists costs one unused row, which is not a
+problem worth designing around.
+
+**Where the agent was useful:** I had suggested letting an admin flag an edit as a
+"correction" applied in place. It pushed back that the system cannot verify a claimed
+correction — `50% → 5%` is indistinguishable from a typo fix while taking money from customers
+who already booked — and that it would move the decision of whether a change is retroactive
+into the admin's hands, making the guarantee a setting. That argument changed my mind, and the
+operational-adjustment route it proposed instead became assumption A10.

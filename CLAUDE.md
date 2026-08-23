@@ -208,6 +208,10 @@ terms of an already CONFIRMED booking.
 - **Layered.** Routes → service → repository. No SQL in route handlers.
 - **Database errors are translated at the repository boundary.** Postgres error codes never
   leak upward as raw exceptions.
+- **Every repository method takes an `AuthScope` as its first parameter.** No overload without
+  it. The scope carries role, `user_id` and `venue_id`, and the repository derives the
+  predicate from it. Never add a repository method that reaches SQL without a scope — see
+  `ARCHITECTURE.md` §4A.
 - **Every mutating endpoint is authorised server-side**, scoped by venue, before any read.
 - **Tests target risky logic** — the state machine, the refund calculator, the concurrency
   paths — not trivial getters.

@@ -54,6 +54,19 @@ The order mattered: because the concurrency strategy was fixed first, Postgres w
 consequence of INV-1 rather than a preference, and Prisma was ruled out on what it cannot
 express rather than on taste.
 
+### Aug 23 · 08:00–09:00 — Two gaps in the architecture closed
+Found that ARCHITECTURE.md said nothing about tenant isolation despite INV-6 being a hard cap,
+and nothing about how the refund policy avoids retroactive changes despite the brief asking
+for it explicitly.
+
+Both settled and written as §4A and §4B. Chose repository-level mandatory scoping over
+Postgres RLS (pooling creates a new isolation failure mode), and immutable policy versions
+over mutable rows. Assumptions A9 and A10 added.
+
+**Cut:** a copy-on-write rule that would have kept a policy version editable until first
+referenced. Correct, but more machinery than the problem deserves and harder to defend in one
+sentence.
+
 ---
 
 ## Cuts

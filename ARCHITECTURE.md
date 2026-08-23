@@ -9,6 +9,37 @@
 
 ---
 
+## 0. Stack
+
+Required by section 02 of the brief: the choice justified against at least one rejected
+alternative. Placed first because §3 depends on it.
+
+**PostgreSQL — chosen by the design, not by preference.** The concurrency model in §3 is built
+on `EXCLUDE USING gist`, range types and generated columns.
+*Rejected: MySQL* — no exclusion constraints, so room overlap would fall back to an
+application-level check, which is the failure mode the brief names.
+
+**TypeScript + Fastify.**
+*Rejected: Python + FastAPI*, an equally good fit for this design. This is a familiarity
+decision, not a technical one — under a 24-hour clock and a live defense held without notes,
+the stack I write without thinking is the right stack. The cost is that Node's
+single-threaded model is awkward for CPU-bound work, which is acceptable here because the
+application layer is deliberately thin: the database does the work.
+
+**No ORM and no query builder — plain `pg` with hand-written SQL.**
+*Rejected: Prisma* — it cannot express `EXCLUDE USING gist`, generated columns, triggers,
+`REVOKE`, or `SELECT ... FOR UPDATE`. All of them would become raw migration SQL,
+`schema.prisma` would sit permanently drifted from the real schema, and there would be two
+sources of truth. The ORM would be bypassed at exactly the points that matter.
+*Kysely was also considered and rejected* — it solves the typing problem without hiding the
+SQL, but its codegen is a tool I would be learning today, and in the live defense a repository
+file holding the literal SQL Postgres will execute is easier to navigate than a builder API.
+The accepted cost is no compile-time checking of column names; mitigated by parameterized
+queries throughout, hand-written row interfaces, and an integration test per repository
+method.
+
+---
+
 ## 1. Entity relationship diagram
 
 *TBD — to be added once the schema is migrated.*
@@ -219,6 +250,93 @@ is therefore useless as a dedup key. The uniqueness constraint is on
 - INV-5: an append-only money ledger. Reconciliation is three anti-joins — captures with no
   CONFIRMED booking, CONFIRMED bookings with no capture, refunds with no matching capture.
 
+## 4A. Tenant isolation model (INV-6)
+
+Numbered 4A so the section numbers the brief asks for keep their positions.
+
+**Mechanism:** every repository method takes an `AuthScope` as its first parameter. There is
+no overload without it, so a call that omits the scope does not compile. The scope carries the
+caller's role, `user_id` and `venue_id`, and the repository derives the predicate from it —
+`venue_id = $1` for venue-scoped roles, `user_id = $1` for `CUSTOMER`, unrestricted for
+`PLATFORM_ADMIN`.
+
+```ts
+// does not compile
+bookingRepo.findById(id)
+
+// the only callable form
+bookingRepo.findById(scope, id)
+```
+
+**Why it holds.** The failure this invariant is actually exposed to is not a clever attack, it
+is a forgotten `WHERE` clause on an endpoint written late in the day. Making the scope a
+required parameter moves that failure from review time to compile time, and the check cannot
+be skipped because there is no code path that reaches SQL without passing through a repository
+method.
+
+Cross-venue reads return `404`, not `403` — see assumption A8. `403` confirms that a resource
+exists, which discloses another tenant's data to someone probing by UUID.
+
+**Rejected: Postgres row-level security.** It is the better fit for this design's general
+preference for database-enforced guarantees, and it would survive a direct `psql` connection,
+which this mechanism does not.
+
+It was rejected because of connection pooling. RLS needs the current tenant set as a session
+variable per request; a pooled connection returned to the pool with that variable still set
+serves the next request under the previous tenant's scope. That is a **new** isolation failure
+mode, created by the mechanism intended to prevent isolation failures, and it sits behind one
+of the three scoring hard caps. `SET LOCAL` inside a transaction avoids it, but only if every
+path remembers — which is the same forgetting problem, relocated.
+
+Three further costs: `PLATFORM_ADMIN` needs a bypass, the reaper and webhook worker run
+unscoped and need another, and `CUSTOMER` scopes by `user_id` rather than `venue_id`, so every
+table needs two policies rather than one.
+
+**Accepted cost.** This is a TypeScript guarantee, not a database one. A direct connection
+bypasses it entirely. Accepted because the invariant is stated over endpoints — *"through any
+endpoint, including by direct ID"* — and the required negative test exercises the API surface.
+RLS remains the correct next step and is listed in §8.
+
+---
+
+## 4B. Refund policy model
+
+The brief sets two requirements that pull against each other: policy is **data, not code** — a
+venue admin changes tiers through the API and it takes effect immediately with no deployment —
+and a policy change **must not retroactively alter the terms of an already CONFIRMED booking**.
+
+**Mechanism: immutable policy versions.** `refund_policy_versions` is append-only. An admin
+editing tiers does not update a row; it inserts a new version and the venue's pointer moves to
+it. Every booking stores the `policy_version_id` in force when the booking was created, and
+the refund calculator reads terms through that reference — never through the venue's current
+version.
+
+The platform default is itself a version in the same table, so a venue that has never set a
+policy still has a pointer to a real row. There is no separate default branch.
+
+```
+v1  48h:100%  24h:50%  0h:0%     ← booking #812 points here, permanently
+v2  48h:100%  24h:75%  0h:25%    ← venue's current version
+```
+
+**Why it holds.** The guarantee is not that the application declines to apply a new policy
+retroactively — it is that the old rows still exist and the booking still points at them.
+Nothing needs to remember to behave correctly.
+
+**Rejected: mutable policy rows with the terms copied onto each booking at confirmation.**
+Equally correct, and simpler to query since it needs no join. Rejected because it duplicates
+the terms on every booking row, and because versioning gives policy history for free, which
+matches how `audit_events` is already treated.
+
+**Also rejected: distinguishing a "correction" from a "change".** The tempting version of this
+lets an admin fix a typo in place while a genuine policy change creates a new version. It was
+rejected because the system cannot verify that a claimed correction is one — `50% → 5%` is
+indistinguishable from a typo fix and takes money from customers who already booked. It would
+put the decision of whether a change is retroactive in the admin's hands, which turns the
+guarantee into a setting. See A10 for how genuine mistakes are handled instead.
+
+---
+
 ## 5. Indexing and query strategy
 
 *TBD — EXPLAIN ANALYZE evidence before and after, against `--profile=full`.*
@@ -250,6 +368,8 @@ incompatible as written and admit more than one reasonable resolution. Reasoning
 | A6 | May a booking mix a room from one venue with equipment from another? | No. Line items must belong to the room's venue. Enforced as a check at hold creation. |
 | A7 | Is partial equipment fulfilment acceptable? | No. A line item is all-or-nothing; insufficient units rejects the whole hold with a 409. |
 | A8 | Cross-venue access: 403 or 404? | **404** on reads, to avoid disclosing the existence of another venue's resources by ID. 403 is reserved for in-venue privilege failures (e.g. VENUE_STAFF attempting a pricing change). |
+| A9 | The brief protects an "already CONFIRMED" booking from a policy change, but does not say which policy applies if the tiers change between hold and confirmation. | The `policy_version_id` is captured at **hold creation**, not at confirmation. The customer is shown terms at checkout and pays against them within minutes; binding at confirmation could apply terms they were never shown. This is stricter than the brief requires, and never weaker. |
+| A10 | Policy versions are immutable, so a genuine admin mistake cannot be corrected for bookings already made under it. What happens then? | It is treated as an operations problem, not a schema one. The wrong version stays; the affected booking receives an explicit, audited adjustment recorded as its own money movement. Silently rewriting the policy would hide the correction from the reconciliation report, which INV-5 exists to make impossible. |
 
 ## 7. What breaks at 100x
 
