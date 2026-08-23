@@ -37,6 +37,15 @@ brief's prohibitions. Six deliverable files created; the graded ones left as emp
 **Cut:** a nine-file raw/polished scratch scheme. Overhead under this clock, and a
 raw/polished split invites reconstructing a clean narrative at the end.
 
+### Aug 23 · 06:00–07:00 — Repo pushed, order of work settled
+Pushed to `atrium-studio-booking`. Added a logging cadence to CLAUDE.md so the graded files
+are updated after every work block.
+
+Rejected an agent plan that went straight to schema and deployment. Architecture is 35% of
+the score and §1, §2, §5, §7, §8 are still stubs; writing schema before the ERD and state
+machine are settled would mean migrating twice. Order: finish architecture → decide stack →
+build.
+
 ---
 
 ## Cuts

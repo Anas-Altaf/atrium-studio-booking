@@ -222,6 +222,18 @@ terms of an already CONFIRMED booking.
   through cannot be defended, so volume produced by the agent is a liability, not an asset.
 - **Do not draft ahead.** Write what was asked for, and stop.
 
+### Logging cadence
+
+After every work block, before moving on:
+
+1. `AI_LOG.md` — one entry per delegation, with a verdict
+2. `TIMELINE.md` — at the end of every hour: what was done, what was cut
+3. `DECISIONS.md` — any choice made, at the moment of choosing
+4. Ask before committing
+
+Ask before writing each entry. Never skip a block silently — if nothing is worth logging,
+say so and wait.
+
 ---
 
 ## 12. When you are unsure

@@ -71,3 +71,22 @@ already settled.
 
 **Root cause:** reasoned forward from the brief's timeline instead of reading what was on
 disk.
+
+---
+
+### 6. Plan for the remaining window
+**Delegated:** With ~5.5 hours left and no code written, propose an order of work.
+
+**Returned:** A schedule starting with schema and migrations, then auth, then the hold
+endpoint, then deployment — driven by the three hard caps.
+
+**Verdict:** `REJECTED`
+
+**What I overrode:** The plan skipped architecture entirely. ARCHITECTURE.md §1, §2, §5, §7
+and §8 are still stubs, and that document is 35% of the score — more than deployment and
+observability combined. Writing schema before the ERD and the state machine are settled also
+means migrating twice. Order corrected to: finish the architecture, then decide the stack
+with that design in hand, then build.
+
+**Also added:** a logging cadence to CLAUDE.md §11, so the graded files are updated after
+every work block rather than at the end.
