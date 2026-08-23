@@ -1,0 +1,143 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Atrium</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font:15px/1.5 system-ui,sans-serif;margin:0;padding:24px;max-width:820px}
+  h1{font-size:20px;margin:0 0 4px} p.sub{color:#666;margin:0 0 20px}
+  section{border:1px solid #ddd;border-radius:6px;padding:16px;margin-bottom:16px}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:#666;margin:0 0 12px}
+  label{display:inline-block;min-width:80px}
+  input,select,button{font:inherit;padding:6px 8px;margin:2px 0}
+  button{cursor:pointer}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eee}
+  th{color:#666;font-weight:600}
+  pre{background:#f6f6f6;padding:10px;border-radius:4px;overflow-x:auto;font-size:13px;margin:8px 0 0}
+  .ok{color:#0a7c2f} .bad{color:#b00} .muted{color:#666}
+  tr.sel{background:#eef5ff}
+</style>
+
+<h1>Atrium</h1>
+<p class="sub">Demo surface over the API. Enough to log in, search rooms across venues, and watch
+the room exclusion constraint reject a second hold on the same slot.</p>
+
+<section>
+  <h2>1 · Log in</h2>
+  <div><label for="email">Email</label><input id="email" size="28" value="customer@atrium.test"></div>
+  <div><label for="pw">Password</label><input id="pw" size="28" value="atrium123"></div>
+  <div class="muted" style="margin:6px 0 8px">
+    Also: staff@ · admin.a@ · admin.b@ · platform@atrium.test — a venue admin sees only their own venue.
+  </div>
+  <button id="login">Log in</button>
+  <span id="who" class="muted"></span>
+</section>
+
+<section>
+  <h2>2 · Rooms</h2>
+  <div>
+    <label for="city">City</label><input id="city" size="14" placeholder="any">
+    <label for="cap" style="min-width:auto;margin-left:10px">Min capacity</label>
+    <input id="cap" size="4" type="number" min="1">
+    <button id="search">Search</button>
+  </div>
+  <div class="muted" style="margin-top:6px">Availability is filtered for the slot below.</div>
+  <table id="rooms"><thead><tr><th>Room</th><th>City</th><th>Cap</th><th>Rate/hr</th><th>Venue</th></tr></thead><tbody></tbody></table>
+</section>
+
+<section>
+  <h2>3 · Hold</h2>
+  <div><label for="start">Start</label><input id="start" type="datetime-local" step="1800"></div>
+  <div class="muted" style="margin:6px 0 8px">
+    One hour, 30-minute aligned, at least an hour ahead. Pick a room above, then hold it twice —
+    the second attempt is the invariant firing.
+  </div>
+  <button id="hold" disabled>Hold selected room</button>
+  <pre id="out" class="muted">No request yet.</pre>
+</section>
+
+<script src="env.js"></script>
+<script>
+const API = window.ATRIUM_API || 'http://localhost:8080';
+let token = null, roomId = null;
+
+const $ = (id) => document.getElementById(id);
+const show = (el, cls, text) => { el.className = cls; el.textContent = text; };
+
+function defaultSlot() {
+  const t = new Date(Date.now() + 26 * 3600e3);
+  t.setUTCHours(9, 0, 0, 0);
+  const off = t.getTimezoneOffset() * 60000;
+  return new Date(t.getTime() - off).toISOString().slice(0, 16);
+}
+$('start').value = defaultSlot();
+
+async function call(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  let body; try { body = await res.json(); } catch { body = await res.text(); }
+  return { status: res.status, body };
+}
+
+$('login').onclick = async () => {
+  const r = await call('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: $('email').value, password: $('pw').value }),
+  });
+  if (r.status !== 200) return show($('who'), 'bad', ' login failed: ' + r.status);
+  token = r.body.token;
+  const u = r.body.user;
+  show($('who'), 'ok', ` ${u.role}${u.venueId ? ' · one venue' : ' · all venues'}`);
+  $('search').click();
+};
+
+$('search').onclick = async () => {
+  if (!token) return show($('out'), 'bad', 'Log in first.');
+  const start = new Date($('start').value);
+  const q = new URLSearchParams({ limit: '20' });
+  if ($('city').value.trim()) q.set('city', $('city').value.trim());
+  if ($('cap').value) q.set('minCapacity', $('cap').value);
+  if (!isNaN(start)) {
+    q.set('from', start.toISOString());
+    q.set('to', new Date(start.getTime() + 3600e3).toISOString());
+  }
+  const r = await call('/rooms?' + q);
+  const tb = $('rooms').querySelector('tbody');
+  tb.innerHTML = '';
+  if (r.status !== 200) return show($('out'), 'bad', 'Search failed: ' + JSON.stringify(r.body));
+  for (const room of r.body) {
+    const tr = tb.insertRow();
+    tr.innerHTML = `<td>${room.name}</td><td>${room.city}</td><td>${room.capacity}</td>
+      <td>${(room.hourly_rate_minor / 100).toLocaleString()}</td>
+      <td class="muted">${room.venue_id.slice(0, 8)}</td>`;
+    tr.onclick = () => {
+      tb.querySelectorAll('tr').forEach((x) => x.classList.remove('sel'));
+      tr.classList.add('sel');
+      roomId = room.id;
+      $('hold').disabled = false;
+    };
+  }
+  show($('out'), 'muted', `${r.body.length} room(s) free for that slot.`);
+};
+
+$('hold').onclick = async () => {
+  const start = new Date($('start').value);
+  const r = await call('/bookings/hold', {
+    method: 'POST',
+    body: JSON.stringify({
+      roomId,
+      startAt: start.toISOString(),
+      endAt: new Date(start.getTime() + 3600e3).toISOString(),
+      equipment: [],
+    }),
+  });
+  const cls = r.status === 201 ? 'ok' : r.status === 409 ? 'bad' : 'muted';
+  show($('out'), cls, r.status + '\n' + JSON.stringify(r.body, null, 2));
+};
+</script>

@@ -11,8 +11,30 @@ pg.types.setTypeParser(20, (v: string) => Number(v));
 // exclusion constraint's wait, each holding a pool client until the winner
 // commits. At max 10 the eleventh request could not get a connection at all and
 // timed out as a 500 -- the proof failed on plumbing, not on the invariant.
+/**
+ * node-postgres does not enable TLS by default and Neon refuses a plaintext
+ * connection, so the deployed instance would fail to connect at boot. Local
+ * Postgres in docker compose has no certificate, so the switch is on the host:
+ * anything that is not loopback is treated as managed and gets TLS.
+ */
+function sslFor(url: string): pg.PoolConfig['ssl'] {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === 'db') {
+    return undefined;
+  }
+  // Neon presents a publicly-trusted certificate, so the chain is verified
+  // rather than waved through.
+  return { rejectUnauthorized: true };
+}
+
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
+  ssl: sslFor(config.databaseUrl),
   max: Number(process.env.PG_POOL_MAX ?? 20),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 15_000,

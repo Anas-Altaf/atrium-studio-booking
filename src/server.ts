@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import { ZodError } from 'zod';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
@@ -9,6 +10,7 @@ import { authPlugin } from './auth/plugin.js';
 import { correlationPlugin } from './lib/logger.js';
 import { authRoutes } from './routes/auth.js';
 import { bookingRoutes } from './routes/bookings.js';
+import { roomRoutes } from './routes/rooms.js';
 
 export async function build() {
   const app = Fastify({
@@ -24,10 +26,23 @@ export async function build() {
     },
   });
 
+  // Before the routes, so the preflight is answered for every one of them. The
+  // frontend is on a different origin, so without this every browser call fails
+  // while curl succeeds -- the failure mode that looks like a broken API.
+  // Bearer tokens, not cookies, so credentials stays off and no origin is
+  // trusted with the session.
+  await app.register(cors, {
+    origin: config.corsOrigins.length ? config.corsOrigins : false,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['content-type', 'authorization', 'x-correlation-id'],
+    credentials: false,
+  });
+
   await app.register(correlationPlugin);
   await app.register(authPlugin);
   await app.register(authRoutes);
   await app.register(bookingRoutes);
+  await app.register(roomRoutes);
 
   /**
    * A health check that means something: it asks the database a question

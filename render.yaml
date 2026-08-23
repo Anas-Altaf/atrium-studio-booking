@@ -1,0 +1,40 @@
+# Render free tier. One web service, no database service: Postgres is Neon, so
+# the two free tiers are independent and neither needs a card.
+#
+# Scope note. The brief requires three replicas behind a load balancer for the
+# LOCAL environment, which docker compose provides and the concurrency proof
+# runs against. The deployed instance only has to be live, reachable and seeded
+# to the demo volume, so it is a single process here. That is not a weaker
+# configuration: correctness does not depend on replica count, because both
+# invariants are enforced by the database rather than by the process. See
+# ARCHITECTURE.md 3.3.
+services:
+  - type: web
+    name: atrium-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      # Neon pooled connection string. Set in the Render dashboard, not here.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      # Comma separated. The Vercel origin goes here once it exists.
+      - key: CORS_ORIGINS
+        sync: false
+      # Migrations run on boot. They are transactional per file and guarded by
+      # an advisory lock, so a restart mid-deploy cannot half-apply one.
+      - key: RUN_MIGRATIONS
+        value: "true"
+      - key: INSTANCE_ID
+        value: render-1
+      # Neon's free tier caps connections; the local default of 20 exists for
+      # the 200-request proof, which does not run here.
+      - key: PG_POOL_MAX
+        value: "5"
+      - key: NODE_VERSION
+        value: "20"

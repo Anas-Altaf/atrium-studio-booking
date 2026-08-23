@@ -8,5 +8,9 @@ export const config = {
   holdTtlMinutes: 8,
   checkoutWindowMinutes: 10,
   instanceId: process.env.INSTANCE_ID ?? 'api-local',
+  // Comma separated. Empty means same-origin only, which is the local default:
+  // docker compose serves nothing cross-origin.
+  corsOrigins: (process.env.CORS_ORIGINS ?? '')
+    .split(',').map((o) => o.trim()).filter(Boolean),
   workerEnabled: process.env.WORKER_ENABLED !== 'false',
 } as const;

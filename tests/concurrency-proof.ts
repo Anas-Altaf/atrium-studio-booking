@@ -160,7 +160,12 @@ interface Slot { startAt: string; endAt: string }
 
 /** A slot far enough ahead to satisfy the advance window, aligned to 30 minutes. */
 function nextFreeSlot(): Slot {
-  const base = Date.now() + 26 * 3_600_000;
+  // A distinct day per run. Holds from a previous run are still HELD -- there is
+  // no reaper yet -- and they stay inside the partial exclusion index and inside
+  // the equipment peak query candidate set, so reusing one slot makes each run
+  // measure the debris of the last one. See ARCHITECTURE.md 7.2.
+  const dayOffset = Math.floor(Date.now() / 60_000) % 60;
+  const base = Date.now() + (26 + dayOffset * 24) * 3_600_000;
   const start = Math.ceil(base / 1_800_000) * 1_800_000;
   const at = new Date(start);
   // 12:00 local-ish, inside every seeded venue's operating hours
