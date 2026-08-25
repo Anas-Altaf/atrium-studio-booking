@@ -29,9 +29,9 @@ Re-committed because the reason is gone: no deadline pressure, and this is Tier 
 |---|---|---|---|---|---|
 | M1 | Paygate | Mock provider to spec. Six chaos behaviours behind `PAYGATE_CHAOS`. Seeded PRNG + `X-Paygate-Force` header so tests are deterministic. Compose service, plus `PAYGATE_EMBEDDED` for the free tier. | — | 3h | **done** — 12 tests, compose service healthy. Embedded flag deferred to M6, where the deploy happens |
 | M2 | Money moves (chaos **off**) | `POST /bookings/:id/pay`. Webhook receiver: raw-body HMAC, dedup insert on `(charge_id, event_type)`, 200, no work inline. Worker loop + charge submitter + webhook processor. | M1 | 5h | **done** — 7 end-to-end tests, suite 70 |
-| M3 | Chaos **on** — INV-3, INV-4 | Hold reaper. Unmatched-webhook sweeper. INV-4 branch: capture landing on an expired hold routes to refund, never CONFIRMED. Bad signature 401 and logged. Duplicate and out-of-order idempotent on business effect. | M2 | 5h | not started |
-| M4 | Cancellation and refunds | Refund calculator as a pure function with unit tests at every tier boundary. Cancel endpoint writing transition and refund intent in one transaction. Refund driver job. `PATCH /venues/:id/policy`. | M3 | 4h | not started |
-| M5 | Proof surface | `GET /reports/reconciliation` — three anti-joins (INV-5). `GET /rooms/:id/availability`. | M4 | 2h | not started |
+| M3 | Chaos **on** — INV-3, INV-4 | Hold reaper (HELD and PENDING_PAYMENT, migration 010). INV-4 branch. Refund driver. Unmatched callbacks handled by retry-with-backoff rather than a separate sweeper. | M2 | 5h | **done** — 14 tests, `bench/soak.mjs` passes under chaos |
+| M4 | Cancellation and refunds | Refund calculator as a pure function with unit tests at every tier boundary. Cancel endpoint writing transition and refund intent in one transaction. `PATCH /venues/:id/policy`. | M3 | 4h | **done** — 29 tests |
+| M5 | Proof surface | `GET /reports/reconciliation` — three anti-joins (INV-5). `GET /rooms/:id/availability`. | M4 | 2h | **done** — zero discrepancies, before and after a soak |
 | M6 | Ship | Redeploy with worker and embedded Paygate. Extend `verify:deployed`. Reseed, re-run benchmark. ARCHITECTURE §2 failure edges and §4 updated. README Known Issues. Five-minute walkthrough. | M5 | 3h | not started |
 
 Sizes are relative, not a schedule.
