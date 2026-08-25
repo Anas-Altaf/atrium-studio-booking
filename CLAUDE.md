@@ -75,11 +75,44 @@ A change that risks any of these must be stopped and flagged before code is writ
 
 ---
 
+## Comments
+
+Every rule here was broken once. The comment ratio reached 30% — a paragraph
+above every function — before it was cut back to 14%.
+
+- **Target 10-15% of lines.** Above 20% in a file, something is being explained that the code should say itself.
+- **Write only what the code cannot say.** Why equipment locks in id order. Why the peak check is not a sum. Why dedup is on `(charge_id, event_type)`. Not what the function does — the signature does that.
+- **No history.** "This used to be...", "an earlier version claimed...", "the proof failed on plumbing" — that is `AI_LOG.md` and the commit message, not the source.
+- **No rejected alternatives.** They belong in `DECISIONS.md`. A comment saying "calling it inline would be the dual write 4D rejects" duplicates a file that already exists.
+- **No flourish.** "which is also what real estate looks like" says nothing.
+- **No JSDoc that repeats the signature.** If the comment is the parameter list in prose, delete it.
+
+---
+
+## Commits
+
+- **Subject plus three to five lines.** A 31-line commit body happened once and was rewritten.
+- **State what broke and what changed.** Nothing else.
+- **Never mention the agent, the assistant, or AI.** No `Co-Authored-By` trailer. AI disclosure lives in `AI_LOG.md`, which is where the brief asks for it.
+- **Author is `Anas-Altaf <anasaltaf35@gmail.com>`.** Always.
+- **Never commit without being asked.**
+
+---
+
+## Tools
+
+- **Use the editor's file tools for reading and editing** — not `sed`, `perl`, heredocs or inline Python. Shell is for `git`, `docker`, `npm` and queries.
+- **Verify, do not assert.** A claim about the code needs a command behind it. "The proof passes" means it was run in this session.
+- **Baseline before refactoring.** Run the suite and the concurrency proof first, so "nothing broke" is a comparison rather than a hope.
+
+---
+
 ## Working rules
 
 - **Ask before writing.** Say what and how long. Wait for a yes.
 - **One file, one change per turn.** Never fill several documents in one pass.
-- **Graded files (`AI_LOG.md`, `DECISIONS.md`, `TIMELINE.md`, `ARCHITECTURE.md`):** provide structure, headings, format. Do not write the prose — that belongs to the author.
+- **Graded files (`AI_LOG.md`, `DECISIONS.md`, `TIMELINE.md`, `ARCHITECTURE.md`, `README.md`, `LOAD_TEST.md`):** provide structure, headings, measurements, tables. Do not write the prose — that belongs to the author. Numbers and plans are facts and stay; "which finding matters" and "what I would do next" are the author's.
+- **Keep the docs true.** A document that says a thing is not built when it is costs more than the gap would have. When code changes what a doc claims, say so in the same turn.
 - **AI_LOG.md:** entry for every delegation with Delegated/Returned/Verdict. ACCEPTED/MODIFIED/REJECTED. Three lines each.
 - **Don't draft ahead.** Write what was asked for and stop.
 - **Don't assign work to the author.** The agent does the writing or says "I cannot do this."
