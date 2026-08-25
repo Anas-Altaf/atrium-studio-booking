@@ -285,11 +285,21 @@ WHERE  r.city = $1
   );
 ```
 
-Availability is last on purpose — it's the only predicate on the large table (250k bookings vs 800 rooms on full profile). Every room eliminated by cheaper filters first is a range lookup not performed.
+Availability is written last on purpose — it's the only predicate on the large table (250k bookings vs 800 rooms on full profile), and the intent was that every room eliminated by a cheaper filter first is a range lookup not performed.
+
+**The planner does not do that**, and the full-profile measurement is what showed it. It leads with the range scan, reads every active booking in the window across all 40 venues, and hash-anti-joins that against the surviving rooms. Writing a predicate last does not make it run last. See §5 measurements below.
 
 **Correction from the pre-code draft:** I first proposed `(city, capacity, hourly_rate_minor)` as a composite index. The third column is wasted — `capacity >=` and `price <=` are both ranges, so the btree stops seeking after the first range predicate. Shipped as `(city, capacity)` with price filtered on the reduced set.
 
-**Measurements:** demo profile only (64 rooms — two heap blocks, no index choice can lose). The availability anti-join behaves as expected: Index Only Scan on the partial GiST with a single heap fetch. But `rooms_search_idx` shows `idx_scan = 0` — the planner drives from `rooms_amenities_idx` on this dataset. That's not evidence against the index, but it means the question of whether the planner picks the right path at scale remains open. See [`LOAD_TEST.md`](./LOAD_TEST.md).
+**Measurements:** full profile, 250,000 bookings, three replicas. All three built endpoints meet their targets — availability p95 230 ms against 300, search 56 ms against 500, hold 172 ms against 250. Plans, numbers and machine spec in [`LOAD_TEST.md`](./LOAD_TEST.md).
+
+What the plans say about the indexes:
+
+- `rooms_search_idx` earns nothing at this size. It turns a seq scan of 800 rooms into a bitmap index scan, but 800 rooms is 18 heap pages — the scan it replaced was already free. Dropping it changes execution time from 18.76 ms to 18.88 ms.
+- 17 of those 18 ms are the availability anti-join, in both plans. `no_room_overlap` is keyed `(room_id, reserved_range)`; with a 7 day window and no room to anchor on, the city filter never reaches the index.
+- The planner estimates 417 rows from that scan and gets 2,137. GiST selectivity on `&&` over `tstzrange` is a 5x under-estimate, which is what chose a hash anti-join over a per-room probe.
+
+The fix is to make the room set lead — a materialised CTE of candidate rooms, or a tenant dimension on the GiST index — not to tune `rooms_search_idx`. Not needed for the targets today; it is the first thing that breaks as the window widens, so it belongs with §7.
 
 ---
 

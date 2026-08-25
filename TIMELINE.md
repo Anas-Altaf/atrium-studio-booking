@@ -73,6 +73,18 @@ Fastify's default `requestIdHeader` honoured an inbound `request-id` and skipped
 
 `tests/append-only.test.ts` and `tests/correlation-id.test.ts` cover both. Suite 24 green.
 
+### Aug 25 — Seed volumes, and the dataset defect underneath them
+The demo profile was seeding 24,675 bookings and 64 rooms against a brief that says 25,000 and 60. Two causes: rooms and equipment were expressed per venue and multiplied, so totals that don't divide evenly came out wrong; and the count came from rows generated rather than rows accepted, with the insert on `ON CONFLICT DO NOTHING`.
+
+Fixing the count exposed the real defect. The generator walked the calendar from the start of the window and stopped at the target, so all 250,000 full-profile bookings landed 13 to 18 months in the past — none in the present or future. The volume was right and the dataset was fiction: every availability query met an empty calendar. Skip rate is now derived from target over capacity so a pass spreads across the whole window, and status follows the date. 47,671 future bookings, 38,006 of them in the exclusion index.
+
+### Aug 25 — Benchmark
+k6 as a compose service, targets as thresholds. All three built endpoints pass: availability 230 ms p95 against 300, search 56 against 500, hold 172 against 250. Revenue report is Tier 2 and unbuilt, so it is not measured.
+
+EXPLAIN says `rooms_search_idx` earns nothing at 800 rooms — 18.88 ms to 18.76 ms — and 17 of those 18 ms are the availability anti-join, which reads every active booking in the window across all venues before the city filter applies. Wrote it up rather than tuning it; the targets are met and the fix belongs with §7.
+
+**Cut:** a hand-rolled load driver, written and deleted before it ran. The brief names k6.
+
 ---
 
 ## Cuts

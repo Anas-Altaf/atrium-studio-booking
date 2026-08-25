@@ -14,6 +14,8 @@
     "seed": "tsx src/db/seed.ts",
     "test": "vitest run",
     "proof": "tsx tests/concurrency-proof.ts",
+    "bench": "docker compose --profile bench run --rm k6",
+    "explain": "docker compose exec -T db psql -U atrium -d atrium -f - < bench/explain.sql",
     "verify:deployed": "node tests/deployed-check.mjs"
   },
   "dependencies": {

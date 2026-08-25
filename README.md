@@ -16,6 +16,16 @@ npm run proof                         # 200-request concurrency proof
 npm test                              # isolation + state machine tests
 ```
 
+Benchmark, against the full profile:
+
+```
+npm run seed -- --profile=full        # 40 venues, 800 rooms, 250,000 bookings
+npm run bench                         # k6 in compose, targets as thresholds
+npm run explain                       # query plans, before and after 007
+```
+
+Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
+
 `docker compose up` stands up **three API replicas behind nginx** on `:8080`.
 
 ---
@@ -48,7 +58,6 @@ npm test                              # isolation + state machine tests
 | **Paygate + payment path** | Mock provider with chaos. Handler: verify HMAC → dedup on `(charge_id, event_type)` → 200. Worker polls `webhook_events` with `FOR UPDATE SKIP LOCKED`, drives state transitions. |
 | **Cancellation + refund calculator** | Policy versions exist, every booking points at one — nothing reads them. Refund intent written in same transaction as cancel transition. Worker drives to Paygate. |
 | **Reaper** | Guarded `UPDATE` on ~15s interval polling `bookings_reaper_idx`. |
-| **Full-profile benchmark** | Targets + method in `LOAD_TEST.md`. Need `--profile=full` seed (250k bookings), `autocannon`, `EXPLAIN ANALYZE`. |
 
 ### Real defects
 
