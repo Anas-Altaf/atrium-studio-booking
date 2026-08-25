@@ -20,6 +20,27 @@ services:
     volumes:
       - atrium-data:/var/lib/postgresql/data
 
+  # The mock provider, its own service. Chaos on, because the brief says to run
+  # it that way, and because a payment path only tested against a well-behaved
+  # provider has not been tested.
+  #
+  # It calls back through the load balancer rather than a single replica, so
+  # deliveries spread across all three and the webhook path is proven on each.
+  paygate:
+    build: .
+    command: ["node", "dist/paygate/server.js"]
+    environment:
+      PAYGATE_SECRET: paygate-dev-secret
+      PAYGATE_CHAOS: "on"
+      PAYGATE_CALLBACK_URL: http://lb:80/webhooks/paygate
+      PAYGATE_PORT: "4000"
+      PAYGATE_SEED: "1337"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   api-1: &api
     build: .
     environment: &api-env

@@ -13,6 +13,7 @@
     "migrate": "tsx src/db/migrate.ts",
     "seed": "tsx src/db/seed.ts",
     "test": "vitest run",
+    "paygate": "tsx src/paygate/server.ts",
     "proof": "tsx tests/concurrency-proof.ts",
     "bench": "docker compose --profile bench run --rm k6",
     "explain": "docker compose exec -T db psql -U atrium -d atrium -f - < bench/explain.sql",
