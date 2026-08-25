@@ -1,6 +1,9 @@
+import { withTransaction } from '../db/pool.js';
 import { badRequest, notFound } from '../errors.js';
-import type { AuthScope } from '../auth/scope.js';
-import type { OperatingHours, RoomSearch, RoomSearchRow } from '../domain/types.js';
+import { type AuthScope, requireVenueAdmin } from '../auth/scope.js';
+import type {
+  OperatingHours, RoomAdminRow, RoomSearch, RoomSearchRow,
+} from '../domain/types.js';
 import * as equipmentRepo from '../repositories/equipmentRepo.js';
 import * as roomRepo from '../repositories/roomRepo.js';
 import * as venueRepo from '../repositories/venueRepo.js';
@@ -9,6 +12,27 @@ export async function findById(scope: AuthScope, roomId: string): Promise<roomRe
   const room = await roomRepo.findDetail(scope, roomId);
   if (!room) throw notFound('room not found');
   return room;
+}
+
+/**
+ * Archiving is `active: false`. Rooms are referenced by bookings and by their
+ * audit history, so removing one would either orphan that history or cascade it
+ * away; a retired room keeps its past and takes no new bookings (A15).
+ */
+export async function update(
+  scope: AuthScope, roomId: string, patch: roomRepo.RoomPatch,
+): Promise<RoomAdminRow> {
+  const venueId = await roomRepo.venueOf(roomId);
+  if (!venueId) throw notFound('room not found');
+  requireVenueAdmin(scope, venueId);
+
+  return withTransaction({ actorId: scope.userId, reason: 'room updated' }, async (tx) =>
+    (await roomRepo.update(tx, roomId, patch))!);
+}
+
+/** The distinct values behind the search filters, so a client is not guessing them. */
+export async function facets(): Promise<{ cities: string[]; amenities: string[] }> {
+  return roomRepo.facets();
 }
 
 /**

@@ -102,3 +102,81 @@ export async function tally(scope: AuthScope): Promise<MoneyTally> {
 
   return { ...money!, ...returned! };
 }
+
+export interface RoomRevenue {
+  room_id: string;
+  room_name: string;
+  bookings: number;
+  gross_minor: number;
+  booked_hours: number;
+}
+
+export interface VenueRevenue {
+  gross_minor: number;
+  refunded_minor: number;
+  paid_bookings: number;
+  booked_hours: number;
+  rooms: number;
+  by_room: RoomRevenue[];
+}
+
+/**
+ * Money first, sales second.
+ *
+ * Gross is what the provider captured, not the sum of booking totals: a booking
+ * cancelled after capture with a partial refund keeps the part that was not
+ * returned, and a totals-based figure would drop it entirely when the status
+ * left CONFIRMED. Utilisation counts only CONFIRMED and COMPLETED, because that
+ * is the inventory actually consumed.
+ *
+ * Bucketed by `start_at`, so a booking belongs to the period it occupies rather
+ * than the one it was paid in.
+ */
+export async function venueRevenue(
+  venueId: string, from: string, to: string,
+): Promise<VenueRevenue> {
+  const window = [venueId, from, to];
+
+  const [captured, returned, byRoom] = await Promise.all([
+    query<{ gross_minor: number; paid_bookings: number }>(
+      `SELECT COALESCE(SUM(p.amount_minor), 0)::bigint AS gross_minor,
+              count(DISTINCT b.id)::int               AS paid_bookings
+       FROM   bookings b
+       JOIN   payments p ON p.booking_id = b.id AND p.status = 'CAPTURED'
+       WHERE  b.venue_id = $1 AND b.start_at >= $2 AND b.start_at < $3`,
+      window,
+    ),
+    query<{ refunded_minor: number }>(
+      `SELECT COALESCE(SUM(r.amount_minor), 0)::bigint AS refunded_minor
+       FROM   refunds r
+       JOIN   bookings b ON b.id = r.booking_id
+       WHERE  r.status = 'SUCCEEDED'
+         AND  b.venue_id = $1 AND b.start_at >= $2 AND b.start_at < $3`,
+      window,
+    ),
+    query<RoomRevenue>(
+      `SELECT r.id AS room_id, r.name AS room_name,
+              count(b.id)::int                          AS bookings,
+              COALESCE(SUM(b.total_minor), 0)::bigint   AS gross_minor,
+              COALESCE(SUM(EXTRACT(EPOCH FROM (b.end_at - b.start_at)) / 3600),
+                       0)::float8                       AS booked_hours
+       FROM   rooms r
+       LEFT   JOIN bookings b
+         ON   b.room_id = r.id
+        AND   b.status IN ('CONFIRMED', 'COMPLETED')
+        AND   b.start_at >= $2 AND b.start_at < $3
+       WHERE  r.venue_id = $1 AND r.active
+       GROUP  BY r.id, r.name
+       ORDER  BY gross_minor DESC, r.name`,
+      window,
+    ),
+  ]);
+
+  return {
+    ...captured[0]!,
+    ...returned[0]!,
+    rooms: byRoom.length,
+    booked_hours: byRoom.reduce((sum, r) => sum + r.booked_hours, 0),
+    by_room: byRoom,
+  };
+}

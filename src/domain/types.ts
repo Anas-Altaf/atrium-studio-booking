@@ -47,6 +47,42 @@ export interface UserRow {
   password_hash: string;
   role: string;
   venue_id: string | null;
+  active: boolean;
+}
+
+export interface VenueRow {
+  id: string;
+  name: string;
+  city: string;
+  timezone: string;
+  operating_hours: OperatingHours;
+}
+
+/** A room as its own venue sees it — archived ones included. */
+export interface RoomAdminRow extends RoomSearchRow {
+  min_duration_min: number;
+  max_duration_min: number;
+  active: boolean;
+}
+
+/** Equipment as its own venue sees it, buffer and all. */
+export interface EquipmentAdminRow {
+  id: string;
+  venue_id: string;
+  name: string;
+  hourly_rate_minor: number;
+  units_owned: number;
+  overbooking_buffer: string;
+  active: boolean;
+}
+
+export interface StaffRow {
+  id: string;
+  email: string;
+  role: string;
+  venue_id: string | null;
+  active: boolean;
+  created_at: Date;
 }
 
 /** A venue's published hours for one weekday, as stored in `operating_hours`. */

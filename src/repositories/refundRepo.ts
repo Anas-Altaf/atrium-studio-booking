@@ -1,4 +1,5 @@
 /** Worker functions take no AuthScope: the worker has no caller and no tenant. */
+import { query } from '../db/pool.js';
 import type { Tx } from '../db/pool.js';
 
 export interface RefundRow {
@@ -21,6 +22,16 @@ export async function findLive(tx: Tx, bookingId: string): Promise<RefundRow | u
   const { rows } = await tx.query<RefundRow>(
     `SELECT ${COLUMNS} FROM refunds
      WHERE  booking_id = $1 AND status IN ('PENDING','SUCCEEDED')`,
+    [bookingId],
+  );
+  return rows[0];
+}
+
+/** The latest refund on a booking, FAILED included, for a detail page. */
+export async function latestForBooking(bookingId: string): Promise<RefundRow | undefined> {
+  const rows = await query<RefundRow>(
+    `SELECT ${COLUMNS} FROM refunds
+     WHERE  booking_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [bookingId],
   );
   return rows[0];

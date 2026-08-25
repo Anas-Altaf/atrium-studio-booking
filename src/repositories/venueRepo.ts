@@ -1,7 +1,121 @@
 import { query } from '../db/pool.js';
 import type { Tx } from '../db/pool.js';
+import { type AuthScope, venuePredicate } from '../auth/scope.js';
 import { notFound, unavailable } from '../errors.js';
-import type { LocalWindow, OperatingHours, RefundTier } from '../domain/types.js';
+import type {
+  LocalWindow, OperatingHours, RefundTier, StaffRow, VenueRow,
+} from '../domain/types.js';
+
+const VENUE_COLUMNS = 'id, name, city, timezone, operating_hours';
+
+export interface VenueListRow extends VenueRow {
+  room_count: number;
+}
+
+/**
+ * The venue directory. A customer sees every venue — the catalogue is
+ * cross-venue by design — and a venue-scoped caller sees only their own, so the
+ * same list drives both a city picker and a console's venue switcher.
+ */
+export async function list(scope: AuthScope, city?: string): Promise<VenueListRow[]> {
+  const params: unknown[] = [];
+  const where: string[] = [];
+
+  const pred = venuePredicate(scope, 'v.id', params.length + 1);
+  if (pred.params.length) { params.push(...pred.params); where.push(pred.sql); }
+  if (city) where.push(`v.city = $${params.push(city)}`);
+
+  return query<VenueListRow>(
+    `SELECT v.id, v.name, v.city, v.timezone, v.operating_hours,
+            (SELECT count(*) FROM rooms r WHERE r.venue_id = v.id AND r.active)::int
+              AS room_count
+     FROM   venues v
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER  BY v.city, v.name`,
+    params,
+  );
+}
+
+export async function findById(scope: AuthScope, id: string): Promise<VenueRow | undefined> {
+  const pred = venuePredicate(scope, 'id', 2);
+  const rows = await query<VenueRow>(
+    `SELECT ${VENUE_COLUMNS} FROM venues WHERE id = $1 AND ${pred.sql}`,
+    [id, ...pred.params],
+  );
+  return rows[0];
+}
+
+export interface NewVenue {
+  name: string;
+  city: string;
+  timezone: string;
+  operatingHours: OperatingHours;
+}
+
+/** Starts on the platform default policy; publishing tiers moves the pointer. */
+export async function insert(tx: Tx, v: NewVenue): Promise<VenueRow> {
+  const { rows } = await tx.query<VenueRow>(
+    `INSERT INTO venues (name, city, timezone, operating_hours, current_policy_version_id)
+     VALUES ($1, $2, $3, $4,
+             (SELECT id FROM refund_policy_versions
+              WHERE venue_id IS NULL ORDER BY created_at DESC LIMIT 1))
+     RETURNING ${VENUE_COLUMNS}`,
+    [v.name, v.city, v.timezone, JSON.stringify(v.operatingHours)],
+  );
+  return rows[0]!;
+}
+
+export type VenuePatch = Partial<NewVenue>;
+
+/**
+ * `rooms.city` is denormalized from here so cross-venue search filters without
+ * a join. Moving a venue has to carry its rooms with it, in the same
+ * transaction, or the search index starts answering for the old city.
+ */
+export async function update(tx: Tx, id: string, patch: VenuePatch): Promise<VenueRow | undefined> {
+  const sets: string[] = [];
+  const params: unknown[] = [id];
+  const p = (v: unknown) => `$${params.push(v)}`;
+
+  if (patch.name !== undefined) sets.push(`name = ${p(patch.name)}`);
+  if (patch.city !== undefined) sets.push(`city = ${p(patch.city)}`);
+  if (patch.timezone !== undefined) sets.push(`timezone = ${p(patch.timezone)}`);
+  if (patch.operatingHours !== undefined) {
+    sets.push(`operating_hours = ${p(JSON.stringify(patch.operatingHours))}`);
+  }
+  if (!sets.length) return findByIdUnscoped(tx, id);
+
+  const { rows } = await tx.query<VenueRow>(
+    `UPDATE venues SET ${sets.join(', ')} WHERE id = $1 RETURNING ${VENUE_COLUMNS}`,
+    params,
+  );
+  if (rows[0] && patch.city !== undefined) {
+    await tx.query('UPDATE rooms SET city = $2 WHERE venue_id = $1', [id, patch.city]);
+  }
+  return rows[0];
+}
+
+/** The caller has already been checked against this venue id by `requireVenueAdmin`. */
+async function findByIdUnscoped(tx: Tx, id: string): Promise<VenueRow | undefined> {
+  const { rows } = await tx.query<VenueRow>(
+    `SELECT ${VENUE_COLUMNS} FROM venues WHERE id = $1`, [id],
+  );
+  return rows[0];
+}
+
+/** No scope: the caller is already inside this venue, by their own token. */
+export async function nameOf(venueId: string): Promise<string | null> {
+  const rows = await query<{ name: string }>('SELECT name FROM venues WHERE id = $1', [venueId]);
+  return rows[0]?.name ?? null;
+}
+
+export async function staff(venueId: string): Promise<StaffRow[]> {
+  return query<StaffRow>(
+    `SELECT id, email, role, venue_id, active, created_at
+     FROM   users WHERE venue_id = $1 ORDER BY email`,
+    [venueId],
+  );
+}
 
 /**
  * The interval in the venue's local time. `AT TIME ZONE` rather than an offset
@@ -68,6 +182,15 @@ export async function tiersOf(tx: Tx, policyVersionId: string): Promise<RefundTi
   );
   if (!rows[0]) throw notFound('refund policy version not found');
   return rows[0].tiers;
+}
+
+/** The same read outside a transaction, for a booking page quoting its own terms. */
+export async function tiersOfVersion(policyVersionId: string): Promise<RefundTier[]> {
+  const rows = await query<{ tiers: RefundTier[] }>(
+    'SELECT tiers FROM refund_policy_versions WHERE id = $1',
+    [policyVersionId],
+  );
+  return rows[0]?.tiers ?? [];
 }
 
 /** Versions are immutable (008 rejects an UPDATE), so an edit is an insert. */

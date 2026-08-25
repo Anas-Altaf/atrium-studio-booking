@@ -76,13 +76,21 @@ export const options = {
       iterations: HOLD_ITERATIONS, maxDuration: '180s',
       exec: 'hold', startTime: '40s',
     },
+    // After the hold phase's maxDuration, not overlapping it: this scenario
+    // reads the same bookings table the hold phase is writing to.
+    revenue: {
+      executor: 'constant-vus', vus: VUS, duration: PHASE,
+      exec: 'revenue', startTime: '225s',
+    },
   },
   thresholds: {
     'http_req_duration{scenario:search}': ['p(95)<500'],
     'http_req_duration{scenario:availability}': ['p(95)<300'],
+    'http_req_duration{scenario:revenue}': ['p(95)<800'],
     'http_req_failed{scenario:search}': ['rate<0.01'],
     'http_req_failed{scenario:availability}': ['rate<0.01'],
     'http_req_failed{scenario:hold}': ['rate<0.01'],
+    'http_req_failed{scenario:revenue}': ['rate<0.01'],
     hold_created_duration: ['p(95)<250'],
     // Enough holds have to actually be placed for that percentile to mean
     // anything. If the seeded calendar has taken most of the slot pool, this
@@ -104,13 +112,22 @@ export function setup() {
   const rooms = res.json().map((r) => r.id);
   if (rooms.length === 0) fail('no Karachi rooms: seed --profile=full first');
 
+  // The report is for venue staff, so it needs a token with reach. The busiest
+  // venue, not an arbitrary one: the target is meaningless against a venue with
+  // no takings to add up.
+  const platform = login('platform@atrium.test', 'atrium123');
+  const venues = http.get(`${BASE}/venues?city=Karachi`, auth(platform));
+  if (venues.status !== 200) fail(`venue lookup failed: ${venues.status} ${venues.body}`);
+  const venueId = venues.json()
+    .sort((a, b) => b.room_count - a.room_count)[0].id;
+
   const capacity = rooms.length * (LAST_DAY - FIRST_DAY) * HOLD_BANDS_UTC.length;
   if (capacity < HOLD_ITERATIONS + HOLD_OFFSET) {
     fail(`slot pool holds ${capacity}, hold phase wants `
        + `${HOLD_ITERATIONS} from offset ${HOLD_OFFSET}`);
   }
 
-  return { token, rooms, midnight: utcMidnight() };
+  return { token, platform, venueId, rooms, midnight: utcMidnight() };
 }
 
 export function search(data) {
@@ -130,6 +147,18 @@ export function availability(data) {
     auth(data.token),
   );
   check(res, { 'availability 200': (r) => r.status === 200 });
+}
+
+/** The brief's fourth target: one venue's books over 30 days. */
+export function revenue(data) {
+  const to = new Date(data.midnight).toISOString();
+  const from = new Date(data.midnight - 30 * 86400000).toISOString();
+  const res = http.get(
+    `${BASE}/reports/revenue?venueId=${data.venueId}`
+    + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    auth(data.platform),
+  );
+  check(res, { 'revenue 200': (r) => r.status === 200 });
 }
 
 /**
@@ -192,6 +221,7 @@ export function handleSummary(data) {
     ['Availability window, 7 day range', 'availability', 300],
     ['Cross-venue search, combined filters', 'search', 500],
     ['Create hold', 'hold', 250],
+    ['Venue revenue report, 30 days', 'revenue', 800],
   ];
 
   const rows = phases.map(([label, scenario, target]) => {

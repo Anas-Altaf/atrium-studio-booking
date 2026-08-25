@@ -47,6 +47,13 @@ export async function bookingRoutes(app: FastifyInstance): Promise<void> {
     async (req) => bookingService.findById(req.scope, req.params.id),
   );
 
+  /** The append-only trail, scoped through the booking it belongs to. */
+  app.get<{ Params: { id: string } }>(
+    '/bookings/:id/audit',
+    { onRequest: [app.authenticate] },
+    async (req) => bookingService.auditTrail(req.scope, req.params.id),
+  );
+
   /** Re-issues the hold for the checkout window the brief guarantees (A1). */
   app.post<{ Params: { id: string } }>(
     '/bookings/:id/checkout',

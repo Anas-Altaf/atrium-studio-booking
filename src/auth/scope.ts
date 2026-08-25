@@ -1,3 +1,5 @@
+import { forbidden, notFound } from '../errors.js';
+
 export type Role = 'CUSTOMER' | 'VENUE_STAFF' | 'VENUE_ADMIN' | 'PLATFORM_ADMIN';
 
 /** Derived from a verified token. Never built from request input. */
@@ -29,6 +31,30 @@ export function venuePredicate(
     return { sql: `${venueCol} = $${nextParamIndex}`, params: [scope.venueId] };
   }
   return { sql: 'TRUE', params: [] };
+}
+
+/**
+ * Every write a venue console makes passes through here.
+ *
+ * 403 rather than 404: an admin knows their own venue exists, and refusing a
+ * venue they can already name reveals nothing. The read side answers 404
+ * instead, because there the id itself is what must stay unconfirmed (A8).
+ */
+export function requireVenueAdmin(scope: AuthScope, venueId: string): void {
+  if (isPlatformAdmin(scope)) return;
+  if (!isVenueAdmin(scope)) {
+    throw forbidden('only a venue admin or platform admin may change a venue');
+  }
+  if (scope.venueId !== venueId) {
+    throw forbidden('a venue admin may only change their own venue');
+  }
+}
+
+/** Reads a venue's operational data: staff see it, customers do not. */
+export function requireVenueReach(scope: AuthScope, venueId: string): void {
+  if (isPlatformAdmin(scope)) return;
+  if (!isVenueScoped(scope)) throw forbidden('this view is for venue staff');
+  if (scope.venueId !== venueId) throw notFound('venue not found');
 }
 
 /** Returns SQL plus the parameter, so a caller cannot pass a value that disagrees with the clause. */

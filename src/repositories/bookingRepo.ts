@@ -167,6 +167,51 @@ export async function list(
   );
 }
 
+export interface NamedLineItem extends EquipmentLineItem {
+  name: string;
+}
+
+/**
+ * Line items with the equipment's name, for a detail page. No AuthScope: every
+ * caller reaches this having already read the booking through a scoped query.
+ */
+export async function namedLineItems(bookingId: string): Promise<NamedLineItem[]> {
+  return query<NamedLineItem>(
+    `SELECT li.equipment_type_id, li.quantity, li.hourly_rate_minor, e.name
+     FROM   booking_line_items li
+     JOIN   equipment_types e ON e.id = li.equipment_type_id
+     WHERE  li.booking_id = $1
+     ORDER  BY e.name`,
+    [bookingId],
+  );
+}
+
+export interface AuditRow {
+  id: number;
+  from_state: string | null;
+  to_state: string;
+  reason: string;
+  occurred_at: Date;
+  actor_email: string | null;
+}
+
+/**
+ * Every state this booking has been in, in order. `actor_id` is null for the
+ * reaper and the worker, which is what makes a system-driven expiry legible
+ * next to a customer-driven cancellation.
+ */
+export async function auditTrail(bookingId: string): Promise<AuditRow[]> {
+  return query<AuditRow>(
+    `SELECT a.id, a.from_state, a.to_state, a.reason, a.occurred_at,
+            u.email AS actor_email
+     FROM   audit_events a
+     LEFT   JOIN users u ON u.id = a.actor_id
+     WHERE  a.booking_id = $1
+     ORDER  BY a.occurred_at, a.id`,
+    [bookingId],
+  );
+}
+
 /** INV-6: scoped in the predicate, so another venue's booking is not found rather than refused. */
 export async function findById(scope: AuthScope, id: string): Promise<BookingRow | undefined> {
   const pred = scopePredicate(scope, { venue: 'b.venue_id', user: 'b.user_id' }, 2);

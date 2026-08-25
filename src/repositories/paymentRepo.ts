@@ -1,4 +1,5 @@
 /** Worker functions take no AuthScope: the worker has no caller and no tenant. */
+import { query } from '../db/pool.js';
 import type { Tx } from '../db/pool.js';
 
 export interface PaymentRow {
@@ -72,6 +73,20 @@ export async function findById(tx: Tx, id: string): Promise<PaymentRow | undefin
   const { rows } = await tx.query<PaymentRow>(
     `SELECT ${COLUMNS} FROM payments WHERE id = $1`,
     [id],
+  );
+  return rows[0];
+}
+
+/**
+ * The latest attempt on a booking, for a detail page. Includes FAILED, which
+ * `findLive` deliberately excludes — a customer whose card was declined needs
+ * to be told that, not shown nothing.
+ */
+export async function latestForBooking(bookingId: string): Promise<PaymentRow | undefined> {
+  const rows = await query<PaymentRow>(
+    `SELECT ${COLUMNS} FROM payments
+     WHERE  booking_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [bookingId],
   );
   return rows[0];
 }

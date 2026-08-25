@@ -35,18 +35,19 @@ A change that risks any of these must be stopped and flagged before code is writ
 - `GET /reports/reconciliation` (INV-5) — zero discrepancies on the demo profile
 - `GET /rooms/:id/availability`
 - Reads a client needs: `GET /bookings`, `GET /rooms/:id`, `GET /rooms/:id/equipment`, `GET /venues/:id/policy`
+- Venue console API: venue directory and settings, room and equipment CRUD, staff accounts, `GET /reports/revenue` (Tier 2)
+- Accounts: `POST /auth/register`, `PATCH /auth/password`, `GET /auth/me` carrying email and venue name
+- Booking detail with line items, payment, refund and its own policy; `GET /bookings/:id/audit`
+- Archiving instead of deleting for rooms, equipment and staff (migration 011, A15)
 - Soak under chaos (`node bench/soak.mjs`) — INV-3, INV-4, INV-5 with three replicas and nothing driven by hand
 - Seed script (`--profile=demo` and `--profile=full`)
 - Full-profile benchmark with k6 (p50/p95/p99, EXPLAIN before/after, machine spec)
 - Health endpoint that checks the database
 
-### Schema only (migrated, no code calls it)
-- Policy versioning for refunds — every booking has a `policy_version_id`, nothing reads it
-
 ### Not built
 - CI (`.github` does not exist)
-- Venue admin console, revenue and utilisation report (Tier 2)
-- Redeploy — the live instance predates the payment path
+- Frontend — the existing `web/` is a stale console and is being replaced
+- Redeploy — the live instance predates the console API
 
 ---
 

@@ -13,9 +13,11 @@ import {
   effectiveCapacity, holdExpiresAt, isOpenFor, mergeLines, priceOf,
   unitsFree, validateInterval,
 } from '../domain/booking.js';
-import type { BookingRow, HoldRequest } from '../domain/types.js';
+import type { BookingRow, HoldRequest, RefundTier } from '../domain/types.js';
 import * as bookingRepo from '../repositories/bookingRepo.js';
 import * as equipmentRepo from '../repositories/equipmentRepo.js';
+import * as paymentRepo from '../repositories/paymentRepo.js';
+import * as refundRepo from '../repositories/refundRepo.js';
 import * as roomRepo from '../repositories/roomRepo.js';
 import * as venueRepo from '../repositories/venueRepo.js';
 
@@ -124,8 +126,57 @@ export async function list(
   return bookingRepo.list(scope, filter);
 }
 
-export async function findById(scope: AuthScope, id: string): Promise<BookingRow> {
+export interface BookingDetail extends BookingRow {
+  room: { id: string; name: string; venue_name: string; city: string } | null;
+  lineItems: bookingRepo.NamedLineItem[];
+  payment: { id: string; status: string; amountMinor: number; currency: string } | null;
+  refund: { id: string; status: string; amountMinor: number; reason: string } | null;
+  policy: { tiers: RefundTier[] };
+}
+
+/**
+ * Everything a booking page shows, in one round trip.
+ *
+ * The policy is read through the booking's own `policy_version_id`, so what a
+ * customer is quoted before cancelling is the terms they agreed to, not the
+ * terms the venue publishes today (4B).
+ */
+export async function findById(scope: AuthScope, id: string): Promise<BookingDetail> {
   const booking = await bookingRepo.findById(scope, id);
   if (!booking) throw notFound('booking not found');
-  return booking;
+
+  const [room, lineItems, payment, refund, tiers] = await Promise.all([
+    roomRepo.findNamed(booking.room_id),
+    bookingRepo.namedLineItems(id),
+    paymentRepo.latestForBooking(id),
+    refundRepo.latestForBooking(id),
+    venueRepo.tiersOfVersion(booking.policy_version_id),
+  ]);
+
+  return {
+    ...booking,
+    room: room ?? null,
+    lineItems,
+    payment: payment
+      ? { id: payment.id, status: payment.status,
+          amountMinor: payment.amount_minor, currency: payment.currency }
+      : null,
+    refund: refund
+      ? { id: refund.id, status: refund.status,
+          amountMinor: refund.amount_minor, reason: refund.reason }
+      : null,
+    policy: { tiers },
+  };
+}
+
+/**
+ * The append-only trail for one booking. Scoped by reading the booking first —
+ * the history of a booking you cannot see must not be readable either.
+ */
+export async function auditTrail(
+  scope: AuthScope, id: string,
+): Promise<bookingRepo.AuditRow[]> {
+  const booking = await bookingRepo.findById(scope, id);
+  if (!booking) throw notFound('booking not found');
+  return bookingRepo.auditTrail(id);
 }

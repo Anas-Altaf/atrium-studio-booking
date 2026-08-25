@@ -11,6 +11,7 @@ import * as healthService from './services/healthService.js';
 import { authRoutes } from './routes/auth.js';
 import { bookingRoutes } from './routes/bookings.js';
 import { roomRoutes } from './routes/rooms.js';
+import { equipmentRoutes } from './routes/equipment.js';
 import { paymentRoutes } from './routes/payments.js';
 import { venueRoutes } from './routes/venues.js';
 import { reportRoutes } from './routes/reports.js';
@@ -67,6 +68,7 @@ export async function build() {
   await app.register(authRoutes);
   await app.register(bookingRoutes);
   await app.register(roomRoutes);
+  await app.register(equipmentRoutes);
   await app.register(paymentRoutes);
   await app.register(venueRoutes);
   await app.register(reportRoutes);
