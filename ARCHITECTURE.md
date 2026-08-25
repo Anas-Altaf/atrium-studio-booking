@@ -201,7 +201,11 @@ A background reaper transitions HELD rows past `expires_at` to EXPIRED on ~15s i
 
 `UPDATE bookings SET status = ?` scattered across controllers is a fail. A BEFORE UPDATE trigger validates `(from_state, to_state)` against the transition matrix and writes the AuditEvent in the same statement. Exactly one AuditEvent per transition is structurally true, not conventionally enforced.
 
-UPDATE and DELETE are revoked on `audit_events`. Except: the app connects as the database owner (both in docker compose and on free hosting), and an owner can't be revoked from its own tables. Migration 008 adds triggers that reject the mutation from any role. Both are kept — the privilege is the right mechanism for production, the trigger is the one actually fastened here. One hole: TRUNCATE bypasses row-level triggers. That needs a BEFORE TRUNCATE trigger plus a separate role for the seed script. Recorded in README.
+UPDATE and DELETE are revoked on `audit_events`. Except: the app connects as the database owner (both in docker compose and on free hosting), and an owner can't be revoked from its own tables. Migration 008 adds triggers that reject the mutation from any role. Both are kept — the privilege is the right mechanism for production, the trigger is the one actually fastened here.
+
+Row-level triggers have their own hole: `TRUNCATE` removes rows without producing row events, so `BEFORE UPDATE OR DELETE ... FOR EACH ROW` never fires for it and the entire trail was removable in one statement. Migration 009 adds statement-level `BEFORE TRUNCATE` guards. A cascaded truncate fires the trigger on the cascaded table too, so `TRUNCATE bookings CASCADE` is refused for the same reason as `TRUNCATE audit_events` — which matters, because the cascade is the path a caller would actually take.
+
+The seed genuinely does need to reset those tables, and it disables the guards explicitly rather than being exempted from them. `ALTER TABLE ... DISABLE TRIGGER` requires ownership, which `atrium_app` does not have under 006, so seeding is a migrator-role operation by construction. DDL is transactional in Postgres: a seed that fails midway brings the guards back with the rollback.
 
 ---
 

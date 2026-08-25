@@ -12,17 +12,32 @@ import { authRoutes } from './routes/auth.js';
 import { bookingRoutes } from './routes/bookings.js';
 import { roomRoutes } from './routes/rooms.js';
 
+/** Bounded and printable. Anything else is replaced with a generated id. */
+const CORRELATION_ID = /^[A-Za-z0-9._:-]{8,128}$/;
+
 export async function build() {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       base: { instance: config.instanceId },
     },
+    // Fastify reads a `request-id` header by default and, when it finds one,
+    // returns it verbatim without ever calling genReqId. Any caller could
+    // therefore choose our correlation id -- including choosing one already in
+    // use, which makes two unrelated requests indistinguishable in the logs.
+    // Turning the default off is what makes genReqId below authoritative; the
+    // one header we do accept is validated there.
+    requestIdHeader: false,
     // The correlation id is the request id, so it appears on every log line
     // this request produces without threading it through by hand.
     genReqId: (req) => {
       const h = req.headers['x-correlation-id'];
-      return typeof h === 'string' && h.length > 0 ? h : randomUUID();
+      // An inbound id is echoed back in a response header and written to every
+      // log line, so it is accepted only in a bounded, printable form. A value
+      // carrying a newline would either forge a log record or make Node throw
+      // on the response header, which would surface as a 500 on a request that
+      // was otherwise fine.
+      return typeof h === 'string' && CORRELATION_ID.test(h) ? h : randomUUID();
     },
   });
 

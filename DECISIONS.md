@@ -69,3 +69,9 @@
 **Chose:** Retry 40P01 in withTransaction, translate to 409 if it survives retry.
 **Rejected:** Advisory lock per room (second concurrency mechanism on top of what the DB already enforces), or letting it surface as 500.
 **Trade-off:** Hold transaction may run more than once — safe because the victim is fully rolled back.
+---
+
+### 11. Append-only enforced in layers, and the seed disables it in the open
+**Chose:** Privilege (006) + row triggers (008) + statement-level TRUNCATE guards (009). The seed calls `ALTER TABLE ... DISABLE TRIGGER`, which requires ownership.
+**Rejected:** A session flag (`SET LOCAL atrium.allow_truncate`) the guard consults — an escape hatch any code path can open turns the guard back into a convention.
+**Trade-off:** The seed can no longer run as the application role. That is the point: seeding is a migrator-role operation, and now the database says so rather than the README.

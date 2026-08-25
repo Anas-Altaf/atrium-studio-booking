@@ -67,9 +67,7 @@ async function seedDatabase(profileName: ProfileName): Promise<void> {
 
   try {
     await client.query('BEGIN');
-    await client.query(`TRUNCATE audit_events, booking_line_items, refunds, payments,
-      webhook_events, unmatched_webhooks, bookings, rooms, equipment_types, users,
-      refund_policy_versions, venues RESTART IDENTITY CASCADE`);
+    await resetSchema(client);
 
     const { rows: [platformPolicy] } = await client.query<{ id: string }>(
       `INSERT INTO refund_policy_versions (venue_id, tiers) VALUES (NULL, $1) RETURNING id`,
@@ -155,6 +153,35 @@ async function seedDatabase(profileName: ProfileName): Promise<void> {
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * The seed is the one caller allowed to remove append-only rows.
+ *
+ * Migration 009 rejects TRUNCATE on audit_events and refund_policy_versions,
+ * so the reset has to disable those guards deliberately rather than slip past
+ * them. ALTER TABLE ... DISABLE TRIGGER requires ownership of the table, which
+ * atrium_app does not have under 006 -- so this is a migrator-role operation by
+ * construction, not by convention. DDL is transactional in Postgres: if the
+ * seed fails midway the guards come back with the rollback.
+ */
+const TRUNCATE_GUARDS = [
+  ['audit_events', 'audit_events_no_truncate'],
+  ['refund_policy_versions', 'refund_policy_versions_no_truncate'],
+] as const;
+
+async function resetSchema(client: import('pg').PoolClient): Promise<void> {
+  for (const [table, trigger] of TRUNCATE_GUARDS) {
+    await client.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
+  }
+
+  await client.query(`TRUNCATE audit_events, booking_line_items, refunds, payments,
+    webhook_events, unmatched_webhooks, bookings, rooms, equipment_types, users,
+    refund_policy_versions, venues RESTART IDENTITY CASCADE`);
+
+  for (const [table, trigger] of TRUNCATE_GUARDS) {
+    await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
   }
 }
 

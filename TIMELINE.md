@@ -64,6 +64,15 @@ Replaced plain HTML with Next.js. App Router, TypeScript, Tailwind. Demo surface
 ### Later — Frontend deployed
 Frontend deployed to Vercel at https://atrium-studio-booking.vercel.app.
 
+### Aug 25 — Two recorded defects closed before restarting Tier 1
+Both were listed in the README rather than fixed, and both were cheap.
+
+`TRUNCATE` walked past the append-only triggers: row-level triggers see no row events on a truncate, so the audit trail was removable in one statement — and reachable by cascade from `bookings`, which is the path anyone would actually take. Migration 009 adds statement-level guards. The seed disables them explicitly, which requires table ownership the app role does not hold.
+
+Fastify's default `requestIdHeader` honoured an inbound `request-id` and skipped `genReqId` entirely, so a caller could pick our correlation id. `requestIdHeader: false`. The one header still accepted, `x-correlation-id`, is now bounded — an unvalidated value goes into a response header and every log line, and one carrying a newline would have forged a log record or thrown on the header.
+
+`tests/append-only.test.ts` and `tests/correlation-id.test.ts` cover both. Suite 24 green.
+
 ---
 
 ## Cuts
