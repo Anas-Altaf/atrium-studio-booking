@@ -41,7 +41,11 @@ beforeAll(async () => {
     seed: 21,
     timeScale: 0.001,
   });
-  await paygate.listen({ port: 4000, host: '127.0.0.1' });
+  // Port 4000 because that is where `config.paygateUrl` points, and config is
+  // read at import time. Two runs in quick succession leave the previous
+  // listener in TIME_WAIT, which Windows refuses to bind over, so this waits
+  // rather than skipping every test in the file with a beforeAll failure.
+  await listenWithRetry(paygate, 4000);
 
   const { rows: [venue] } = await pool.query<{ id: string }>(
     `INSERT INTO venues (name, city, timezone, operating_hours, current_policy_version_id)
@@ -57,6 +61,8 @@ beforeAll(async () => {
     [venue!.id],
   );
   roomId = room!.id;
+
+  await drainQueues();
 
   const res = await fetch(`${apiUrl}/auth/login`, {
     method: 'POST',
@@ -104,11 +110,18 @@ async function pay(bookingId: string): Promise<string> {
 /**
  * Submits with the given chaos behaviour forced on the provider.
  *
- * One attempt, not a batch. The worker retries a failed submission within the
- * same call, and the provider's idempotent replay answers 202 with the original
- * charge — correct behaviour, but it hides the failure the test is about.
+ * One payment per call, not a batch. The worker retries a failed submission
+ * within the same call, and the provider's idempotent replay answers 202 with
+ * the original charge — correct behaviour, but it hides the failure under test.
+ *
+ * `settle` decides when to stop. The worker claims the oldest pending payment
+ * first and has no idea which one this test cares about, so leftovers from
+ * earlier tests would otherwise take the forced behaviour while this test's own
+ * payment went to a provider behaving normally.
  */
-async function submitWithChaos(force: string, attempts = 1): Promise<void> {
+async function submitWithChaos(
+  force: string, settle?: () => Promise<boolean>,
+): Promise<void> {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
@@ -117,11 +130,22 @@ async function submitWithChaos(force: string, attempts = 1): Promise<void> {
   }) as typeof fetch;
 
   try {
-    await submitPendingCharges(undefined, attempts);
+    if (!settle) {
+      await submitPendingCharges(undefined, 1);
+      return;
+    }
+    await waitFor(async () => {
+      await submitPendingCharges(undefined, 1);
+      return settle();
+    }, 15_000);
   } finally {
     globalThis.fetch = original;
   }
 }
+
+/** Drives the worker until this test's own payment has reached the provider. */
+const untilCharged = (paymentId: string) => async () =>
+  (await chargeIdOf(paymentId)) !== null;
 
 const statusOf = async (id: string): Promise<string> => (await pool.query<{ status: string }>(
   'SELECT status FROM bookings WHERE id = $1', [id],
@@ -131,6 +155,20 @@ const chargeIdOf = async (paymentId: string): Promise<string | null> => (
   await pool.query<{ charge_id: string | null }>(
     'SELECT charge_id FROM payments WHERE id = $1', [paymentId],
   )).rows[0]!.charge_id;
+
+async function listenWithRetry(
+  server: FastifyInstance, port: number, attempts = 20,
+): Promise<void> {
+  for (let i = 1; ; i++) {
+    try {
+      await server.listen({ port, host: '127.0.0.1' });
+      return;
+    } catch (err) {
+      if (i >= attempts || (err as { code?: string }).code !== 'EADDRINUSE') throw err;
+      await new Promise((r) => { setTimeout(r, 250); });
+    }
+  }
+}
 
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 4_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -148,16 +186,89 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 4_000): Pr
  * rows that are not ours and this test times out having proved nothing.
  *
  * Drive until this booking's own refund reaches the provider.
+ *
+ * The window is generous because a claim that is lost backs off 1s, 2s, 4s,
+ * 8s: anything shorter than the tail of that sequence fails on scheduling
+ * rather than on behaviour, which is the opposite of what this file is for.
  */
 async function driveUntilSubmitted(bookingId: string): Promise<void> {
   await waitFor(async () => {
+    // The intent is written by the capture webhook, which is batched too, so
+    // both jobs run: there is nothing to drive until that event is applied.
+    await processWebhooks();
     await driveRefunds();
     const { rows } = await pool.query<{ provider_refund_id: string | null }>(
       'SELECT provider_refund_id FROM refunds WHERE booking_id = $1', [bookingId],
     );
     return Boolean(rows[0]?.provider_refund_id);
-  }, 10_000);
+  }, 30_000);
 }
+
+/** `processWebhooks` batches the same way, so it needs the same treatment. */
+async function applyWhile(settled: () => Promise<boolean>): Promise<void> {
+  await waitFor(async () => {
+    await processWebhooks();
+    return settled();
+  }, 30_000);
+}
+
+const applyUntil = (bookingId: string, expected: string) =>
+  applyWhile(async () => (await statusOf(bookingId)) === expected);
+
+/** Submits until this test's own payment has a charge id, not somebody else's. */
+async function chargeOne(paymentId: string): Promise<string> {
+  await waitFor(async () => {
+    await submitPendingCharges(undefined, 1);
+    return (await chargeIdOf(paymentId)) !== null;
+  }, 15_000);
+  return (await chargeIdOf(paymentId))!;
+}
+
+const paymentStatusOf = async (id: string): Promise<string> => (
+  await pool.query<{ status: string }>(
+    'SELECT status FROM payments WHERE id = $1', [id],
+  )).rows[0]!.status;
+
+/**
+ * Empties the worker queues before the file starts.
+ *
+ * Every job claims the oldest row first and has no idea which one a test cares
+ * about. Earlier files and earlier runs leave pending payments, unapplied
+ * webhook events and undriven refunds behind, so without this a test's forced
+ * chaos lands on somebody else's row and its own goes through a provider
+ * behaving normally. That is the whole of this file's flakiness.
+ *
+ * Rows that cannot settle — a charge the provider forgot when it restarted —
+ * defer themselves out of the due window, so this terminates.
+ */
+async function drainQueues(): Promise<void> {
+  // Refunds and webhook events carry a next_attempt_at, so anything already in
+  // the queue is pushed out of reach rather than worked off. Draining is not
+  // enough: rows that can never succeed — a charge the provider forgot when it
+  // restarted — back off only as far as five minutes and then become due again,
+  // in the middle of whichever run is unlucky.
+  await pool.query(
+    `UPDATE refunds SET next_attempt_at = now() + interval '1 hour'
+     WHERE status = 'PENDING' AND provider_refund_id IS NULL`,
+  );
+  await pool.query(
+    `UPDATE webhook_events SET next_attempt_at = now() + interval '1 hour'
+     WHERE processed_at IS NULL`,
+  );
+
+  // Payments have no such column, so leftovers are worked off instead. They
+  // succeed or they move to FAILED; either way they stop being claimed.
+  for (let i = 0; i < 5 && (await pendingPayments()) > 0; i++) {
+    await submitPendingCharges(undefined, 50);
+  }
+}
+
+const pendingPayments = async (): Promise<number> => Number(
+  (await pool.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM payments
+     WHERE status = 'PENDING' AND charge_id IS NULL`,
+  )).rows[0]!.n,
+);
 
 const eventCount = async (chargeId: string): Promise<number> => Number(
   (await pool.query<{ n: string }>(
@@ -169,8 +280,7 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
   it('routes the money back and leaves the booking EXPIRED', async () => {
     const bookingId = await hold();
     const paymentId = await pay(bookingId);
-    await submitPendingCharges();
-    const chargeId = (await chargeIdOf(paymentId))!;
+    const chargeId = await chargeOne(paymentId);
 
     // The hold runs out while the charge is in flight.
     await pool.query(
@@ -181,15 +291,11 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
     expect(await statusOf(bookingId)).toBe('EXPIRED');
 
     await waitFor(async () => (await eventCount(chargeId)) > 0);
-    await processWebhooks();
+    await applyWhile(async () => (await paymentStatusOf(paymentId)) === 'CAPTURED');
 
     // Not confirmed. The capture is recorded, and the money is owed back.
     expect(await statusOf(bookingId)).toBe('EXPIRED');
-
-    const { rows: [payment] } = await pool.query<{ status: string }>(
-      'SELECT status FROM payments WHERE id = $1', [paymentId],
-    );
-    expect(payment!.status).toBe('CAPTURED');
+    expect(await paymentStatusOf(paymentId)).toBe('CAPTURED');
 
     const { rows: [refund] } = await pool.query<{ amount_minor: number; status: string }>(
       'SELECT amount_minor, status FROM refunds WHERE booking_id = $1', [bookingId],
@@ -201,8 +307,7 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
   it('drives the refund to the provider and reaches REFUNDED', async () => {
     const bookingId = await hold();
     const paymentId = await pay(bookingId);
-    await submitPendingCharges();
-    const chargeId = (await chargeIdOf(paymentId))!;
+    const chargeId = await chargeOne(paymentId);
 
     await pool.query(
       `UPDATE bookings SET expires_at = now() - interval '1 minute' WHERE id = $1`,
@@ -219,9 +324,7 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
          WHERE charge_id = $1 AND event_type = 'refund.succeeded'`, [chargeId],
       )).rows[0]!.n,
     ) > 0);
-    await processWebhooks();
-
-    expect(await statusOf(bookingId)).toBe('REFUNDED');
+    await applyUntil(bookingId, 'REFUNDED');
 
     const { rows: [refund] } = await pool.query<{ status: string; provider_refund_id: string }>(
       'SELECT status, provider_refund_id FROM refunds WHERE booking_id = $1', [bookingId],
@@ -233,8 +336,7 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
   it('writes the whole sequence to the audit trail', async () => {
     const bookingId = await hold();
     const paymentId = await pay(bookingId);
-    await submitPendingCharges();
-    const chargeId = (await chargeIdOf(paymentId))!;
+    const chargeId = await chargeOne(paymentId);
 
     await pool.query(
       `UPDATE bookings SET expires_at = now() - interval '1 minute' WHERE id = $1`,
@@ -266,6 +368,10 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
 describe('chaos behaviours, one at a time', () => {
   it('a transient 500 leaves no charge id, and the retry does not double charge', async () => {
     const bookingId = await hold();
+    // This case asserts the absence of a charge id, so it cannot drive until
+    // its own payment is claimed. Emptying the queue first makes the payment
+    // created next the only one the forced 500 can land on.
+    await drainQueues();
     const paymentId = await pay(bookingId);
 
     await submitWithChaos('transient');
@@ -273,8 +379,7 @@ describe('chaos behaviours, one at a time', () => {
 
     // The provider took the request despite the 500, so its callback names a
     // charge this API has never recorded.
-    await submitPendingCharges();
-    const chargeId = await chargeIdOf(paymentId);
+    const chargeId = await chargeOne(paymentId);
     expect(chargeId).toMatch(/^ch_/);
 
     const { rows } = await pool.query(
@@ -286,7 +391,7 @@ describe('chaos behaviours, one at a time', () => {
   it('a duplicate delivery is recorded once and applied once', async () => {
     const bookingId = await hold();
     const paymentId = await pay(bookingId);
-    await submitWithChaos('duplicate');
+    await submitWithChaos('duplicate', untilCharged(paymentId));
     const chargeId = (await chargeIdOf(paymentId))!;
 
     await waitFor(async () => (await eventCount(chargeId)) > 0);
@@ -295,8 +400,7 @@ describe('chaos behaviours, one at a time', () => {
     // Two deliveries, one row: dedup is on (charge_id, event_type).
     expect(await eventCount(chargeId)).toBe(1);
 
-    await processWebhooks();
-    expect(await statusOf(bookingId)).toBe('CONFIRMED');
+    await applyUntil(bookingId, 'CONFIRMED');
 
     const { rows } = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM audit_events
@@ -349,13 +453,11 @@ describe('chaos behaviours, one at a time', () => {
   it('a declined charge fails the booking rather than confirming it', async () => {
     const bookingId = await hold();
     const paymentId = await pay(bookingId);
-    await submitWithChaos('declined');
+    await submitWithChaos('declined', untilCharged(paymentId));
     const chargeId = (await chargeIdOf(paymentId))!;
 
     await waitFor(async () => (await eventCount(chargeId)) > 0);
-    await processWebhooks();
-
-    expect(await statusOf(bookingId)).toBe('FAILED');
+    await applyUntil(bookingId, 'FAILED');
     const { rows: [payment] } = await pool.query<{ status: string }>(
       'SELECT status FROM payments WHERE id = $1', [paymentId],
     );

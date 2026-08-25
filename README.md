@@ -102,4 +102,5 @@ Two consequences, both real:
 ### Known caveats
 
 - **One-replica deployment.** The live API runs one process. The concurrency proof runs against three behind nginx locally. Both guarantees are enforced in the DB, not in application memory, so replica count affects throughput and lock-wait distribution — not correctness.
-- **Frontend.** Demo surface over the API, not a product. Sign in, search rooms, hold a room, hold it again and see the 409. Shows correlation ids and venue counts as the cheapest INV-6 demonstration.
+- **Frontend.** Next App Router, four role-aware navigations over the same API. Customer path is search → room → hold → checkout → pay → confirm → cancel; the console covers rooms, equipment, policy, staff, venue settings, revenue and reconciliation. It draws what a role is likely to need — it does not decide what a role may see. Every scope check is a SQL predicate on the server, and typing a hidden URL still ends in a 403 or a 404.
+- **Free slots are derived twice.** The API returns busy intervals, so the client re-implements the 15 minute turnaround, the 30 minute grid and the advance window to decide what to offer. If the two drift the UI offers slots the hold endpoint rejects with 409. `web/lib/slots.test.ts` pins the client half against the same rules.
