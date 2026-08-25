@@ -23,9 +23,6 @@ function sslFor(url: string): pg.PoolConfig['ssl'] {
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
   ssl: sslFor(config.databaseUrl),
-  // 200 concurrent holds on one slot leaves 199 transactions waiting inside the
-  // exclusion constraint, each holding a client. At 10 the proof failed on
-  // plumbing rather than on the invariant.
   max: Number(process.env.PG_POOL_MAX ?? 20),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 15_000,

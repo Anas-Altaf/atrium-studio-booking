@@ -1,8 +1,4 @@
-/**
- * Row shapes, and also what the API returns. A row-to-response mapping is the
- * right call the moment the two need to differ; today it would rename every
- * field on the wire for no gain.
- */
+/** Row shapes returned by the API. Mapped separately when the wire format diverges from the storage format. */
 
 export interface BookingRow {
   id: string;

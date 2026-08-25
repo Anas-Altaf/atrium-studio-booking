@@ -13,7 +13,7 @@ docker compose up --build -d          # postgres + api-1/2/3 + nginx on :8080
 npm install
 npm run seed -- --profile=demo        # 8 venues, 60 rooms, 25,000 bookings
 npm run proof                         # 200-request concurrency proof
-npm test                              # isolation + state machine tests
+npm test                              # isolation, error mapping, append-only
 ```
 
 Benchmark, against the full profile:
@@ -55,9 +55,9 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 
 | Area | How I would have built it |
 |---|---|
-| **Paygate + payment path** | Mock provider with chaos. Handler: verify HMAC → dedup on `(charge_id, event_type)` → 200. Worker polls `webhook_events` with `FOR UPDATE SKIP LOCKED`, drives state transitions. |
 | **Cancellation + refund calculator** | Policy versions exist, every booking points at one — nothing reads them. Refund intent written in same transaction as cancel transition. Worker drives to Paygate. |
 | **Reaper** | Guarded `UPDATE` on ~15s interval polling `bookings_reaper_idx`. |
+| **Reconciliation report (INV-5)** | Three anti-joins: captures with no CONFIRMED booking, CONFIRMED bookings with no capture, refunds with no matching capture. |
 
 ### Real defects
 

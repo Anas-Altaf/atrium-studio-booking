@@ -215,8 +215,6 @@ Migration 009 closes the remaining hole:
 
 ## 4. Payment integrity model
 
-> **Schema migrated, code not built.** Payments, refunds, webhook_events, unmatched_webhooks exist with their uniqueness constraints. Nothing calls them. INV-3, INV-4, INV-5 are structurally supported and behaviorally unproven.
-
 > Section numbers 4A–4D live under §4 to keep the 8 positions the brief asks for stable. They span tenant isolation, refund policy, cancellation idempotency, and background work — each is a distinct design concern, not a sub‑problem of payment.
 
 The problem: Paygate delivers webhooks at-least-once, potentially out of order, and sometimes before it returns the 202. X-Paygate-Delivery is new on every attempt — useless as a dedup key. The uniqueness constraint is on `(charge_id, event_type)`.
@@ -373,16 +371,12 @@ Nested Loop Left Join
 
 ## 8. What I would do with two more weeks
 
-1. **Paygate and the payment path.** Three invariants rest on constraints nothing exercises. Mock provider with chaos modes; checkout endpoint persisting idempotency key before the outbound call; webhook handler; SKIP LOCKED worker; unmatched_webhooks sweeper. INV-4 falls out of the last step.
+1. **Cancellation, refund calculator, reconciliation.** The payment path is built, but cancellation is not. Refund calculator needs to read the policy version's tiers and compute amounts. Reconciliation endpoint is the only way to prove INV-5 — three anti-joins, one endpoint.
 
-2. **Cancellation, refund calculator, reconciliation.** Policy versions migrated, every booking points at the right one — nothing reads them yet. Reconciliation is three anti-joins and is what turns "money is never silently lost" from a claim into a query anyone can run.
+2. **The reaper.** Small. Guarded UPDATE on a short interval. Currently the only thing between an abandoned hold and a permanently blocked slot.
 
-3. **The reaper.** Small. Guarded UPDATE on a short interval. Currently the only thing between an abandoned hold and a permanently blocked slot.
+3. **Fix the equipment join order** (§7 measured it). The peak check scans 12k rows per hold. Driving from `booking_line_items` instead of `bookings` would cut that to a handful.
 
-4. **Fix the equipment join order** (§7 measured it). Small change, large effect.
+4. **Row-level security.** With `SET LOCAL` proven safe by the audit trigger, the pooling objection is answerable. Would put INV-6 in the DB beside INV-1 and INV-2.
 
-5. **Row-level security.** With `SET LOCAL` proven safe by the audit trigger, the pooling objection is answerable. Would put INV-6 in the DB beside INV-1 and INV-2.
-
-6. **Full-profile benchmark** and LOAD_TEST.md with real numbers.
-
-7. **Close the TRUNCATE hole** — BEFORE TRUNCATE trigger plus a dedicated migrator role so the seed can still do its job.
+5. **Dedicated per-room availability endpoint.** The cross-venue search already does this, but an endpoint that takes a room id and a window and returns a binary free/busy is what the frontend would use for a heatmap.

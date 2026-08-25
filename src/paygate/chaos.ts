@@ -65,9 +65,8 @@ export function planFor(
     race,
     transient,
     declined: false,
-    // A race delivers immediately, or the jitter (0-400ms) would beat the
-    // response held back by 150 and the race would not happen. A long delay
-    // still wins: a webhook 60 seconds late cannot also arrive early.
+    // A race delivers immediately so the webhook beats the 202 response.
+    // A long delay (60s+) still wins.
     delayMs: delayed
       ? DELAYED_MIN_MS + Math.floor(rand() * (DELAYED_MAX_MS - DELAYED_MIN_MS))
       : race ? 0 : jitter,

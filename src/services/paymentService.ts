@@ -1,8 +1,7 @@
 /**
- * The outbound call to Paygate is not here. This writes the payment row and
- * moves the booking in one transaction; the worker submits it. Calling the
- * provider inline after the commit would be the dual write 4D rejects — a crash
- * between the two loses a charge the booking believes was submitted.
+ * Writes the payment row and moves the booking in one transaction; the worker
+ * submits it to Paygate. Calling the provider inline after the commit would be
+ * the dual write §4D rejects — a crash between the two loses a charge.
  */
 import { withTransaction } from '../db/pool.js';
 import type { AuthScope } from '../auth/scope.js';

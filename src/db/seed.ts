@@ -44,8 +44,7 @@ const PROFILES: Record<ProfileName, Profile> = {
 
 /**
  * Splits a total across n buckets, largest first, never differing by more than
- * one. 60 rooms over 8 venues is four venues with 8 and four with 7 -- which is
- * also what real estate looks like.
+ * one. 60 over 8 is four of 8 and four of 7.
  */
 function spread(total: number, buckets: number): number[] {
   const base = Math.floor(total / buckets);
@@ -244,10 +243,7 @@ async function seedBookings(
 }
 
 /**
- * Derived from the shortfall so one walk spreads it over the whole window. A
- * fixed rate filled the first 150 days of a 720 day window and stopped, putting
- * every booking in the past and leaving the availability query nothing to test.
- *
+ * Derived from the shortfall so one walk spreads it over the whole window.
  * Capacity per room-day: 12 hours of walk, ~3.25 hours per slot (1-4 hour
  * booking, 15 minute turnaround, 0-2 half hour gap), so ~3.7 slots.
  */

@@ -14,25 +14,11 @@ export class AppError extends Error {
 export const conflict = (code: string, m: string) => new AppError(409, code, m);
 export const badRequest = (code: string, m: string) => new AppError(400, code, m);
 export const notFound = (m = 'not found') => new AppError(404, 'NOT_FOUND', m);
-export const forbidden = (m = 'forbidden') => new AppError(403, 'FORBIDDEN', m);
 export const unauthorized = (m = 'unauthorized') => new AppError(401, 'UNAUTHORIZED', m);
-
-/** A dependency is missing, not the caller wrong. 503 says "not right now". */
 export const unavailable = (code: string, m: string) => new AppError(503, code, m);
 
 interface PgError { code?: string; constraint?: string; message?: string }
 
-/**
- * The two codes that matter most:
- *
- *   23P01  exclusion_violation  the room exclusion constraint rejected an
- *                               overlapping insert. This is INV-1 firing, and it
- *                               is the expected outcome for 199 of the 200
- *                               requests in the concurrency proof. It must be a
- *                               clean 409.
- *   ATR01                       raised by the state machine trigger for a
- *                               transition absent from booking_transitions.
- */
 export function translatePgError(err: unknown): AppError | undefined {
   const e = err as PgError;
   if (!e || typeof e.code !== 'string') return undefined;
@@ -45,8 +31,6 @@ export function translatePgError(err: unknown): AppError | undefined {
     case 'ATR01':
       return conflict('ILLEGAL_TRANSITION', e.message ?? 'illegal state transition');
 
-    // Retried before reaching here (see withTransaction). Still a lost race,
-    // and a lost race is a 409, never a 500.
     case '40P01':
     case '40001':
       return conflict('CONTENTION', 'That slot is under contention. Retry.');

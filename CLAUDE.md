@@ -22,22 +22,23 @@ A change that risks any of these must be stopped and flagged before code is writ
 - Cross-venue room search with filters
 - Cross-venue isolation (INV-6) — 7 tests pass, deployed 13/13
 - 200-request concurrency proof — Phase A 1×201/199×409, Phase B 3×201/197×409
-- Append-only audit enforcement (migration 008 triggers)
+- Append-only audit enforcement (layer 2: triggers, layer 3: TRUNCATE guards)
 - Error handling (400/401/404/409 shapes, correlation id on every response)
+- Paygate mock provider with all 6 chaos modes
+- Checkout → charge → confirm flow
+- Webhook handler + SKIP LOCKED worker
+- Retry driver for refunds
 - Seed script (`--profile=demo` and `--profile=full`)
+- Full-profile benchmark with k6 (p50/p95/p99, EXPLAIN before/after, machine spec)
 - Health endpoint that checks the database
 
 ### Schema only (migrated, no code calls it)
-- Payments, refunds, webhook_events, unmatched_webhooks tables exist
 - Policy versioning for refunds — every booking has a `policy_version_id`, nothing reads it
 
 ### Not built
-- Paygate mock provider with chaos modes
-- Checkout / confirm / cancel endpoints
-- Refund calculator
+- Cancellation endpoint + refund calculator
 - Hold reaper (expired bookings block their slot forever right now)
-- Full-profile benchmark (LOAD_TEST.md has targets and method, no numbers)
-- Reconciliation report
+- Reconciliation report (INV-5)
 
 ---
 
