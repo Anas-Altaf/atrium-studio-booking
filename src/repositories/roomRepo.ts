@@ -1,20 +1,12 @@
-/**
- * Room reads. SQL only.
- */
 import { query } from '../db/pool.js';
 import type { Tx } from '../db/pool.js';
 import { type AuthScope, venuePredicate } from '../auth/scope.js';
 import type { RoomRow, RoomSearch, RoomSearchRow } from '../domain/types.js';
 
 /**
- * The columns the hold path needs, inside the caller's transaction.
- *
- * Scoped in SQL rather than checked by the caller afterwards. It read any
- * venue's room and left the venue check to the one service that happened to
- * perform it — which made INV-6, a scoring hard cap, depend on every future
- * caller remembering. A venue-scoped caller now finds nothing, which the
- * service reports as 404: the same answer as a room that does not exist, so the
- * response cannot be used to discover which room ids are real (A8).
+ * INV-6 in the predicate rather than in the caller: a venue-scoped caller finds
+ * nothing, which the service reports as 404 — the same answer as a room that
+ * does not exist, so the response cannot be used to probe room ids (A8).
  */
 export async function findForBooking(
   scope: AuthScope, tx: Tx, roomId: string,
@@ -29,17 +21,9 @@ export async function findForBooking(
 }
 
 /**
- * Cross-venue search (ARCHITECTURE.md 5).
- *
- * Filter order is the design, not incidental. The cheap predicates on `rooms`
- * are written first and the availability test last, because availability is the
- * only one that touches `bookings` -- 250,000 rows on the full profile against
- * 800 rooms. Measured on the full profile the planner does not execute them in
- * that order; see LOAD_TEST.md.
- *
- * Scope: only venue-scoped roles are confined to their own venue. Searching
- * across venues is the whole point of the endpoint for a customer, and a
- * platform admin is unrestricted.
+ * Cross-venue search. The cheap predicates on `rooms` are written first and the
+ * availability test last; measured on the full profile the planner does not run
+ * them in that order (LOAD_TEST.md).
  */
 export async function search(scope: AuthScope, s: RoomSearch): Promise<RoomSearchRow[]> {
   const where: string[] = [];
@@ -54,7 +38,6 @@ export async function search(scope: AuthScope, s: RoomSearch): Promise<RoomSearc
   if (s.maxPriceMinor !== undefined) where.push(`r.hourly_rate_minor <= ${p(s.maxPriceMinor)}`);
   if (s.amenities?.length) where.push(`r.amenities @> ${p(s.amenities)}::text[]`);
 
-  // Availability last, and only when a window was asked for.
   if (s.from && s.to) {
     where.push(`NOT EXISTS (
       SELECT 1 FROM bookings b

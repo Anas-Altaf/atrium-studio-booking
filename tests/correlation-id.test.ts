@@ -1,13 +1,7 @@
 /**
- * The correlation id has to be ours.
- *
- * Fastify's default requestIdHeader is `request-id`: when that header is
- * present it becomes req.id verbatim and genReqId is never called. Two
- * consequences, both real. A caller could pin every request to one id and make
- * the log unusable, and an id carrying a newline would be echoed into a
- * response header -- which Node rejects, turning a good request into a 500.
- *
- * The one header we accept is x-correlation-id, and only in a bounded form.
+ * The correlation id has to be ours. Fastify's default `request-id` header
+ * would let a caller pin every request to one id, and a value carrying a
+ * newline would throw on the response header — a 500 on a good request.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';

@@ -1,14 +1,9 @@
 /**
- * Paygate against a stub receiver, over real HTTP.
+ * Paygate against a stub receiver, over real HTTP. Every assertion here is
+ * about the provider's behaviour, not ours.
  *
- * The stub is what the API's webhook handler will be, reduced to recording what
- * arrived: body, signature, delivery id. Every assertion here is about the
- * provider's behaviour, not ours — if these pass, the chaos the API has to
- * survive is real chaos and not a mock that behaves.
- *
- * Chaos is forced by header rather than waited for. A test that waits for a 30%
- * duplicate to fire is flaky; a test that raises the rate to 100% is testing a
- * configuration that never ships.
+ * Chaos is forced by header. Waiting for a 30% duplicate to fire is flaky, and
+ * raising the rate to 100% tests a configuration that never ships.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';

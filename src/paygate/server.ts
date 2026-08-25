@@ -1,16 +1,7 @@
 /**
- * Paygate — the mock payment provider, built to the specification in section 06
- * of the brief. It is deliberately unreliable.
- *
- * State is in memory. A mock does not need to survive a restart, and a database
- * would make it look like part of the system under test.
- *
- * Runs two ways. As its own service under docker compose, which is the shape
- * the brief describes and the one that gets reviewed. And mounted inside the API
- * process when `PAYGATE_EMBEDDED=on`, because a second service on the free
- * hosting tier sleeps on its own schedule — a reviewer returning after twenty
- * minutes would find a provider that never calls back and read it as a broken
- * payment path.
+ * The mock provider, built to section 06 of the brief and deliberately
+ * unreliable. State is in memory: a mock need not survive a restart, and a
+ * database would make it look like part of the system under test.
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -74,15 +65,10 @@ export function buildPaygate(opts: PaygateOptions): FastifyInstance {
   });
 
   /**
-   * POST /paygate/charges
-   *
-   * The transient failure is the interesting one. The charge is created and its
-   * webhook is scheduled *before* the 500 is returned, so the caller is left
-   * holding a charge it has no id for. That is the harder reading of the spec
-   * and the one that actually exercises the unmatched-webhook path: a real
-   * provider that fails after taking the request behaves exactly this way.
-   * Retrying with the same Idempotency-Key returns the original charge rather
-   * than creating a second one, which is what the brief requires.
+   * The transient failure creates the charge and schedules its webhook before
+   * answering 500, so the caller holds a charge it has no id for — which is how
+   * a real provider fails after taking a request, and what exercises the
+   * unmatched-webhook path. A retry with the same key returns the original.
    */
   app.post('/paygate/charges', async (req, reply) => {
     const key = req.headers['idempotency-key'];
@@ -128,9 +114,7 @@ export function buildPaygate(opts: PaygateOptions): FastifyInstance {
       return reply.code(500).send({ error: 'PROVIDER_UNAVAILABLE' });
     }
 
-    // The race: the webhook is already on its way, and the 202 is held back so
-    // it lands after. This is the 25% case where the callback names a charge
-    // the API has not recorded yet.
+    // The webhook is already on its way; the 202 is held back so it lands after.
     if (plan.race) await sleep(150 * scale);
 
     return reply.code(202).send({ charge_id: charge.chargeId, status: 'processing' });

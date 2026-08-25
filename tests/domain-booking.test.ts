@@ -1,10 +1,6 @@
 /**
  * The booking rules, tested directly.
  *
- * These previously needed Postgres, a seeded database and an HTTP request to
- * assert that a 90 minute booking is legal. They are pure functions now, so the
- * test states the instant it is reasoning about instead of arranging one.
- *
  * No database in this file. If it needs one, something has leaked back into the
  * domain layer.
  */

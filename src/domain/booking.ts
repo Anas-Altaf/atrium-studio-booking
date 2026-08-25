@@ -1,15 +1,4 @@
-/**
- * Booking rules, as pure functions.
- *
- * Nothing here touches the database, the clock, or the request. That is the
- * point: these are the rules the brief states in its operating table, and they
- * are the part most worth testing directly. They were previously inline in the
- * repository, where reaching them meant standing up Postgres and issuing an
- * HTTP request to assert that a 90 minute booking is legal.
- *
- * `now` is a parameter rather than a call to Date.now() so a test can state the
- * instant it is reasoning about instead of arranging one.
- */
+/** Booking rules. No database, no clock, no request — `now` is a parameter. */
 import { badRequest } from '../errors.js';
 import type {
   EquipmentLine, EquipmentTypeRow, LocalWindow, RoomRow,
@@ -17,14 +6,12 @@ import type {
 
 const HALF_HOUR_MS = 1_800_000;
 const HOUR_MS = 3_600_000;
-const MIN_NOTICE_MS = HOUR_MS;              // bookings open one hour ahead
-const MAX_HORIZON_MS = 90 * 24 * HOUR_MS;   // and close 90 days ahead
+const MIN_NOTICE_MS = HOUR_MS;
+const MAX_HORIZON_MS = 90 * 24 * HOUR_MS;
 
 /**
- * Two line items naming the same equipment type would each be checked against a
- * peak that does not yet include the other, and would then collide on
- * UNIQUE (booking_id, equipment_type_id). Merged before anything else looks at
- * them.
+ * Two lines naming the same type would each be checked against a peak not yet
+ * including the other, then collide on UNIQUE (booking_id, equipment_type_id).
  */
 export function mergeLines(lines: EquipmentLine[]): EquipmentLine[] {
   const totals = new Map<string, number>();
@@ -35,12 +22,9 @@ export function mergeLines(lines: EquipmentLine[]): EquipmentLine[] {
 }
 
 /**
- * The operating rules from section 04 of the brief: 30 minute granularity,
- * 1 to 8 hours, from an hour ahead to 90 days ahead.
- *
- * The database enforces granularity and duration as CHECK constraints too. This
- * is not redundant — a constraint violation is a 400 with a constraint name in
- * it, and a caller deserves to be told which rule they broke.
+ * Granularity and duration are CHECK constraints as well. Not redundant: a
+ * constraint violation names a constraint, and a caller deserves to be told
+ * which rule they broke.
  */
 export function validateInterval(
   startAt: string,
@@ -72,32 +56,17 @@ export function validateInterval(
   }
 }
 
-/**
- * Whether a venue is open for the whole interval.
- *
- * The conversion into the venue's local time is Postgres's job — it owns the
- * timezone database and the DST rules, and the venues span Karachi, Dubai and
- * London. The comparison, once the local strings exist, is this.
- *
- * The 15 minute turnaround may run past closing (A5), so only start and end are
- * checked, not `reserved_range`.
- */
+/** The 15 minute turnaround may run past closing (A5), so only start and end are checked. */
 export function isOpenFor(window: LocalWindow): boolean {
   const windows = window.hours?.[window.dow] ?? [];
   return windows.some(([from, to]) => window.local_start >= from && window.local_end <= to);
 }
 
-/**
- * Units a venue will let out at once. A venue admin may enable a buffer of up
- * to 10% to absorb no-shows (brief, operating rules) — rooms are structurally
- * excluded from it (A2), which is why this takes an equipment type and there is
- * no room equivalent.
- */
+/** Rooms are structurally excluded from the overbooking buffer (A2). */
 export function effectiveCapacity(type: EquipmentTypeRow): number {
   return Math.floor(type.units_owned * (1 + Number(type.overbooking_buffer)));
 }
 
-/** Units still free, given the peak concurrent reservation over the interval. */
 export function unitsFree(type: EquipmentTypeRow, peak: number): number {
   return Math.max(0, effectiveCapacity(type) - peak);
 }
@@ -106,7 +75,6 @@ export function hoursBetween(startAt: string, endAt: string): number {
   return (new Date(endAt).getTime() - new Date(startAt).getTime()) / HOUR_MS;
 }
 
-/** Room hours plus equipment hours, in minor units. */
 export function priceOf(
   room: Pick<RoomRow, 'hourly_rate_minor'>,
   types: EquipmentTypeRow[],

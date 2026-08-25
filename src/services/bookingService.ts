@@ -1,22 +1,9 @@
 /**
- * The hold, as a sequence of decisions.
+ * The service owns the transaction: INV-1 and INV-2 are guarantees only because
+ * the checks and the writes commit together.
  *
- * The service owns the transaction. That boundary is where it belongs: the two
- * inventory guarantees are only guarantees because the checks and the writes
- * commit together, and a repository that opened its own transaction per query
- * would quietly dissolve that.
- *
- * Read top to bottom, the order below is the design:
- *
- *   INV-1  the booking INSERT is checked by the exclusion constraint. No prior
- *          SELECT for conflicts — the check and the write are one operation.
- *   INV-2  equipment types are locked FOR UPDATE, then peak concurrent usage is
- *          evaluated over the requested interval.
- *   INV-6  a venue-scoped caller reaching another venue's room gets 404.
- *
- * Lock ordering: equipment types are locked first, always sorted by id, and only
- * then is the booking inserted. A fixed global order is what stops two
- * concurrent holds over the same two types from deadlocking.
+ * Equipment is locked before the booking is inserted, in id order, so two
+ * concurrent holds over the same two types cannot deadlock.
  */
 import { config } from '../config.js';
 import { withTransaction } from '../db/pool.js';
@@ -36,10 +23,6 @@ export async function createHold(scope: AuthScope, req: HoldRequest): Promise<Bo
   const equipment = mergeLines(req.equipment);
 
   return withTransaction({ actorId: scope.userId, reason: 'hold created' }, async (tx) => {
-    // INV-6 on the write side. The scope is in the repository's predicate, so a
-    // room in another venue is not found rather than found and then refused —
-    // 404 either way, and the answer cannot be used to discover which room ids
-    // exist (A8).
     const room = await roomRepo.findForBooking(scope, tx, req.roomId);
     if (!room) throw notFound('room not found');
 
@@ -51,8 +34,8 @@ export async function createHold(scope: AuthScope, req: HoldRequest): Promise<Bo
         `The venue is not open for ${window.local_start}-${window.local_end} on ${window.dow}.`);
     }
 
-    // Sorted here as well as in the query: ORDER BY fixes the order within one
-    // statement, this fixes it across the request.
+    // Sorted here as well as in the query: ORDER BY only fixes the order within
+    // one statement.
     const typeIds = equipment.map((e) => e.equipmentTypeId).sort();
     const locked = typeIds.length
       ? await equipmentRepo.lockTypes(tx, typeIds, room.venue_id)

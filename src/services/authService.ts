@@ -1,11 +1,3 @@
-/**
- * Credential checking.
- *
- * Signing the token is not here. The JWT is issued by the Fastify plugin and is
- * a transport concern; what this service owns is the question "are these
- * credentials good", which is answerable without knowing there is an HTTP layer
- * at all.
- */
 import bcrypt from 'bcryptjs';
 import { unauthorized } from '../errors.js';
 import * as userRepo from '../repositories/userRepo.js';
@@ -18,14 +10,11 @@ export interface AuthenticatedUser {
 }
 
 /**
- * A bcrypt hash of nothing, compared against when the account does not exist.
- *
- * Without it, a missing account returns in the time of a database lookup and a
- * wrong password returns in the time of a bcrypt comparison — roughly a hundred
- * milliseconds apart, which is enough to enumerate who has an account.
+ * Compared against when the account does not exist, so a missing account and a
+ * wrong password take the same time. Without it the difference is a bcrypt
+ * comparison, which is enough to enumerate accounts.
  */
-const ABSENT_USER_HASH =
-  '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
+const ABSENT_USER_HASH = '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
 
 export async function verifyCredentials(
   email: string, password: string,

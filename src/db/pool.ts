@@ -2,21 +2,11 @@ import pg from 'pg';
 import { config } from '../config.js';
 import { translatePgError } from '../errors.js';
 
-// Money is bigint in the database. node-postgres returns int8 as a string to
-// avoid silent precision loss; these amounts are minor units well inside
-// Number.MAX_SAFE_INTEGER, so parsing is safe and keeps the types simple.
+// int8 comes back as a string to avoid precision loss. These are minor units,
+// well inside MAX_SAFE_INTEGER.
 pg.types.setTypeParser(20, (v: string) => Number(v));
 
-// 200 concurrent holds on one slot means 199 transactions sitting inside the
-// exclusion constraint's wait, each holding a pool client until the winner
-// commits. At max 10 the eleventh request could not get a connection at all and
-// timed out as a 500 -- the proof failed on plumbing, not on the invariant.
-/**
- * node-postgres does not enable TLS by default and Neon refuses a plaintext
- * connection, so the deployed instance would fail to connect at boot. Local
- * Postgres in docker compose has no certificate, so the switch is on the host:
- * anything that is not loopback is treated as managed and gets TLS.
- */
+/** Managed databases need TLS; local compose Postgres has no certificate. */
 function sslFor(url: string): pg.PoolConfig['ssl'] {
   let host: string;
   try {
@@ -27,14 +17,15 @@ function sslFor(url: string): pg.PoolConfig['ssl'] {
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === 'db') {
     return undefined;
   }
-  // Neon presents a publicly-trusted certificate, so the chain is verified
-  // rather than waved through.
   return { rejectUnauthorized: true };
 }
 
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
   ssl: sslFor(config.databaseUrl),
+  // 200 concurrent holds on one slot leaves 199 transactions waiting inside the
+  // exclusion constraint, each holding a client. At 10 the proof failed on
+  // plumbing rather than on the invariant.
   max: Number(process.env.PG_POOL_MAX ?? 20),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 15_000,
@@ -51,25 +42,19 @@ export interface ActorContext {
 const RETRYABLE = new Set(['40P01', '40001']);
 
 /**
- * Runs fn inside a transaction, translating Postgres error codes at this
- * boundary so nothing above sees a raw driver exception.
+ * The actor and reason go in with set_config(..., true) — SET LOCAL, so they
+ * cannot survive on a pooled connection and attribute the next request's audit
+ * rows to this actor. The audit trigger reads them.
  *
- * The actor and reason are set with set_config(..., true), which is SET LOCAL
- * and therefore scoped to this transaction. They are read by the audit trigger.
- * Transaction scope matters: a session-level setting would survive on a pooled
- * connection and attribute the next request's audit rows to this actor.
+ * The retry is for real deadlocks: two overlapping inserts each place a GiST
+ * index entry, then each waits on the other, and Postgres shoots one. The
+ * victim rolls back entirely, so replaying is safe — and a deadlock here is a
+ * lost race, which the brief requires to be a clean 409 rather than a 500.
  */
 export async function withTransaction<T>(
   actor: ActorContext,
   fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
-  // A GiST exclusion constraint under real concurrency produces genuine
-  // deadlocks, and the first 200-request run proved it: two inserts each place
-  // their index entry, then each scans, finds the other, and waits on the
-  // other's transaction. Postgres shoots one of them with 40P01. The victim is
-  // rolled back completely -- nothing it wrote survives -- so replaying it is
-  // safe, and it must not surface as a 500: a deadlock here is a lost race,
-  // which the brief requires to be a clean 409.
   for (let attempt = 0; ; attempt++) {
     const client = await pool.connect();
     try {

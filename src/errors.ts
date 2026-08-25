@@ -1,8 +1,4 @@
-/**
- * Database errors are translated here, at the repository boundary. Postgres
- * error codes never leak upward as raw exceptions, and a lost race is never
- * a 500.
- */
+/** Postgres codes are translated here, at the repository boundary. A lost race is never a 500. */
 
 export class AppError extends Error {
   constructor(
@@ -21,12 +17,7 @@ export const notFound = (m = 'not found') => new AppError(404, 'NOT_FOUND', m);
 export const forbidden = (m = 'forbidden') => new AppError(403, 'FORBIDDEN', m);
 export const unauthorized = (m = 'unauthorized') => new AppError(401, 'UNAUTHORIZED', m);
 
-/**
- * The request was well formed and the system cannot serve it — a dependency is
- * missing rather than the caller being wrong. 503 rather than 500, because it
- * says "not right now" instead of "something in here is broken", and because
- * the fix is operational.
- */
+/** A dependency is missing, not the caller wrong. 503 says "not right now". */
 export const unavailable = (code: string, m: string) => new AppError(503, code, m);
 
 interface PgError { code?: string; constraint?: string; message?: string }

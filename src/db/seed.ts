@@ -4,18 +4,13 @@
  *   --profile=demo   8 venues,  60 rooms,   200 equipment units,  25,000 bookings,   400 users
  *   --profile=full  40 venues, 800 rooms, 2,500 equipment units, 250,000 bookings, 5,000 users
  *
- * Those are the volumes the brief specifies, so they are stated here as totals
- * and distributed across venues rather than expressed per-venue and multiplied.
- * Per-venue counts do not divide evenly -- 60 rooms over 8 venues, 2,500 units
- * over 40 -- and the earlier form quietly produced 64 rooms and 2,400 units.
- * A benchmark is only reproducible if the dataset is the one described.
+ * Volumes are stated as totals and spread across venues: 60 rooms over 8 and
+ * 2,500 units over 40 do not divide evenly, and per-venue counts multiplied up
+ * produced 64 and 2,400.
  *
- * Bookings are generated slot by slot per room per day rather than at random,
- * because the exclusion constraint would reject overlapping inserts and a
- * random generator would spend its time losing to it. The first pass skips
- * slots probabilistically to leave realistic gaps, which costs roughly 45% of
- * the calendar's capacity; later passes return and fill until the target count
- * is actually in the table.
+ * Bookings are generated slot by slot rather than at random, because the
+ * exclusion constraint would reject overlapping inserts and a random generator
+ * would spend its time losing to it.
  */
 import bcrypt from 'bcryptjs';
 import { pool } from './pool.js';
@@ -183,14 +178,10 @@ async function seedDatabase(profileName: ProfileName): Promise<void> {
 }
 
 /**
- * The seed is the one caller allowed to remove append-only rows.
- *
- * Migration 009 rejects TRUNCATE on audit_events and refund_policy_versions,
- * so the reset has to disable those guards deliberately rather than slip past
- * them. ALTER TABLE ... DISABLE TRIGGER requires ownership of the table, which
- * atrium_app does not have under 006 -- so this is a migrator-role operation by
- * construction, not by convention. DDL is transactional in Postgres: if the
- * seed fails midway the guards come back with the rollback.
+ * 009 rejects TRUNCATE on these, so the reset disables the guards deliberately
+ * rather than slipping past them. DISABLE TRIGGER needs ownership, which
+ * atrium_app does not have under 006 — a migrator-role operation by
+ * construction. DDL is transactional, so a failed seed restores them.
  */
 const TRUNCATE_GUARDS = [
   ['audit_events', 'audit_events_no_truncate'],
@@ -212,19 +203,10 @@ async function resetSchema(client: import('pg').PoolClient): Promise<void> {
 }
 
 /**
- * The brief names an exact volume per profile, and the numbers it quotes are
- * what the latency targets are measured against, so the seed has to land on
- * them rather than near them.
- *
- * Two reasons the old single pass fell short of 25,000. It counted rows it had
- * generated, not rows the database accepted -- the insert is ON CONFLICT DO
- * NOTHING, which covers the exclusion constraint, so an overlap is dropped
- * silently. And skipping 45% of slots for realistic gaps leaves the calendar
- * with less capacity than the target, so it ran out of days first.
- *
- * Now: pass 0 leaves the gaps, later passes go back and fill them, and every
- * pass counts what actually committed. Refusing to place them is better than
- * quietly seeding a smaller dataset and benchmarking that instead.
+ * The latency targets are measured against these volumes, so the seed lands on
+ * them exactly or fails loudly. Each pass counts what the database accepted,
+ * not what it generated: the insert is ON CONFLICT DO NOTHING, which covers the
+ * exclusion constraint, so an overlap is dropped silently.
  */
 async function seedBookings(
   client: import('pg').PoolClient,
@@ -262,22 +244,12 @@ async function seedBookings(
 }
 
 /**
- * How often to skip a slot, so one walk of the calendar places roughly the
- * number of bookings still owed and spreads them over the whole window.
+ * Derived from the shortfall so one walk spreads it over the whole window. A
+ * fixed rate filled the first 150 days of a 720 day window and stopped, putting
+ * every booking in the past and leaving the availability query nothing to test.
  *
- * A fixed skip rate was the bug behind a worse defect than the count. The walk
- * goes day by day from the start of the window and stops when the target is
- * met, so filling 45% of every day it touched meant 250,000 bookings landed in
- * the first 150 days of a 720 day window -- all of them 13 to 18 months in the
- * past, none in the present or future. The volume looked right and the dataset
- * was fiction: every availability query found the calendar empty, so the
- * benchmark measured an anti-join with nothing to do.
- *
- * Capacity per room-day: the 09:00-21:00 walk is 12 hours, and one slot
- * consumes a 1-4 hour booking (mean 2.5) plus the 15 minute turnaround plus a
- * 0-2 half hour gap (mean 0.5), so ~3.25 hours per slot and ~3.7 slots. Taking
- * `remaining / capacity` of them puts the expected placement at exactly the
- * shortfall, wherever in the window it falls.
+ * Capacity per room-day: 12 hours of walk, ~3.25 hours per slot (1-4 hour
+ * booking, 15 minute turnaround, 0-2 half hour gap), so ~3.7 slots.
  */
 const SLOTS_PER_ROOM_DAY = 3.7;
 
@@ -299,12 +271,8 @@ async function placeBookings(
   policyId: string,
   opts: { skip: number; target: number },
 ): Promise<number> {
-  // Status follows the calendar. A booking last March cannot be CONFIRMED and
-  // still waiting to happen, and one three months out cannot be COMPLETED.
-  // This is also what puts real work in front of the availability query: only
-  // HELD, PENDING_PAYMENT and CONFIRMED are in the exclusion constraint's
-  // partial index, so a window in the future has rows to test against while
-  // the settled past stays out of the index entirely.
+  // Status follows the calendar, which is also what puts rows in the exclusion
+  // constraint's partial index for a future window to test against.
   const PAST = ['COMPLETED', 'COMPLETED', 'COMPLETED', 'CANCELLED', 'EXPIRED'];
   const FUTURE = ['CONFIRMED', 'CONFIRMED', 'CONFIRMED', 'CONFIRMED', 'CANCELLED'];
 
@@ -312,14 +280,9 @@ async function placeBookings(
   const now = Date.now();
   const originMs = now - spanMs * 0.75;
 
-  // The walk is bounded by rows accepted, not rows attempted. Capping attempts
-  // at the shortfall starves the tail: needing one more row, the pass offers
-  // exactly one slot, that slot is already taken, and it reports a stall on a
-  // calendar with plenty of room left.
-  //
-  // Overshoot is prevented by the batch instead. A batch never inserts more
-  // than its own length, so holding it to the shortfall keeps the final count
-  // exact while the earlier batches stay at full size.
+  // Bounded by rows accepted, not attempted: capping attempts at the shortfall
+  // starves the tail. Overshoot is prevented by the batch instead, which never
+  // inserts more than its own length.
   let inserted = 0;
   const batch: unknown[][] = [];
   const flushAt = () => Math.min(1_000, opts.target - inserted);

@@ -1,10 +1,6 @@
 /**
- * A health check that means something: it asks the database a question rather
- * than reporting that the process is running.
- *
- * Reporting the migration count as well as reachability catches the case a bare
- * ping does not — a replica connected to a database that never ran its
- * migrations answers every request with a 500 while looking healthy.
+ * The migration count, not just reachability: a replica pointed at an
+ * unmigrated database answers every request with a 500 while looking healthy.
  */
 import { config } from '../config.js';
 import * as systemRepo from '../repositories/systemRepo.js';

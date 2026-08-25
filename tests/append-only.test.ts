@@ -1,14 +1,7 @@
 /**
- * The audit trail is only evidence if it cannot be edited.
- *
- * 008 rejects UPDATE and DELETE row by row. TRUNCATE produces no row events, so
- * it walked straight past those triggers -- the whole trail removable in one
- * statement by the same role the triggers were written to constrain. 009 adds
- * the statement-level guard. These assert both halves, plus the cascade path,
- * which is the one a caller would actually reach for: TRUNCATE bookings CASCADE
- * takes audit_events with it.
- *
- * Runs against a real database. The mechanism under test is the trigger.
+ * The audit trail is only evidence if it cannot be edited. Row triggers (008)
+ * and the statement-level TRUNCATE guard (009), including the cascade path from
+ * `bookings`, which is the one a caller would actually reach for.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { pool } from '../src/db/pool.js';

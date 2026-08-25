@@ -1,13 +1,7 @@
 /**
- * The shapes the layers agree on.
- *
- * These are database row shapes, snake_case included, and they are also what
- * the API returns. That is deliberate rather than unconsidered: a mapping layer
- * between row and response would be the right call the moment the two need to
- * differ, and today they do not. Introducing one now would rename every field
- * on the wire and break the frontend for no gain.
- *
- * Recorded here so the decision is visible instead of looking like an oversight.
+ * Row shapes, and also what the API returns. A row-to-response mapping is the
+ * right call the moment the two need to differ; today it would rename every
+ * field on the wire for no gain.
  */
 
 export interface BookingRow {
