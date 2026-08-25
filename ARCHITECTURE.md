@@ -380,12 +380,9 @@ Nested Loop Left Join
 
 ## 8. What I would do with two more weeks
 
-1. **Cancellation, refund calculator, reconciliation.** The payment path is built, but cancellation is not. Refund calculator needs to read the policy version's tiers and compute amounts. Reconciliation endpoint is the only way to prove INV-5 — three anti-joins, one endpoint.
-
-2. **The reaper.** Small. Guarded UPDATE on a short interval. Currently the only thing between an abandoned hold and a permanently blocked slot.
-
-3. **Fix the equipment join order** (§7 measured it). The peak check scans 12k rows per hold. Driving from `booking_line_items` instead of `bookings` would cut that to a handful.
-
-4. **Row-level security.** With `SET LOCAL` proven safe by the audit trigger, the pooling objection is answerable. Would put INV-6 in the DB beside INV-1 and INV-2.
-
-5. **Dedicated per-room availability endpoint.** The cross-venue search already does this, but an endpoint that takes a room id and a window and returns a binary free/busy is what the frontend would use for a heatmap.
+1. **CI.** (Tier 2, not built)
+2. **Live availability heatmap with WebSocket.** (Tier 3)
+3. **Natural language booking.** (Tier 3)
+4. **Recurring bookings.** (Tier 3)
+5. **Waitlist with automatic promotion.** (Tier 3)
+6. **Email or in-app notifications.** (Tier 3)

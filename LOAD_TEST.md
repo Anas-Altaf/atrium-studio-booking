@@ -25,25 +25,25 @@ part of the slot pool if a reseed is not wanted.
 
 | Endpoint | Target p95 | p50 | p95 | p99 | max | Error rate | Met |
 |---|---|---|---|---|---|---|---|
-| Availability window, 7 day range | < 300 ms | 90.4 | **230.1** | 353.3 | 482.7 | 0.00% | yes |
-| Cross-venue search, combined filters | < 500 ms | 24.8 | **55.6** | 83.2 | 622.0 | 0.00% | yes |
-| Create hold | < 250 ms | 75.5 | **172.2** | 218.1 | 308.4 | 0.00% | yes |
-| Venue revenue report, 30 days | < 800 ms | — | — | — | — | — | endpoint not built |
+| Room availability, 7 day range | < 300 ms | 17.1 | **35.1** | 50.5 | 220.3 | 0.00% | yes |
+| Cross-venue search, combined filters | < 500 ms | 36.0 | **79.1** | 113.2 | 292.1 | 0.00% | yes |
+| Create hold | < 250 ms | 32.1 | **69.5** | 97.0 | 126.6 | 0.00% | yes |
+| Venue revenue report, 30 days | < 800 ms | 228.9 | **476.1** | 622.1 | 938.7 | 0.00% | yes |
 
-Holds attempted 4,000 · placed 2,679 · 409 conflicts 1,321 · anything else 0.
+Holds attempted 4,000 · placed 2,704 · 409 conflicts 1,296 · anything else 0.
+
+What each row actually calls:
+
+- **Room availability** — `GET /rooms/:id/availability?from&to`, one room over seven days, rotating across the 100 Karachi rooms so it is not one cached row. Reads the same partial GiST index the exclusion constraint uses.
+- **Cross-venue search** — every filter the brief names at once: `city`, `minCapacity`, `maxPriceMinor`, `amenities` **and** a 7 day `from`/`to` window. The window is the expensive half — an anti-join against 250,000 bookings — and an earlier version of this script left it off, which measured an easier query than the target is set for.
+- **Create hold** — `POST /bookings/hold`, one slot per (room, day, band) triple so two VUs never ask for the same one.
+- **Venue revenue report** — `GET /reports/revenue`, the busiest Karachi venue over 30 days: captured payments, successful refunds, and per-room utilisation in one response.
 
 How the hold row is measured:
 
-- 409s are the seeded calendar and the previous run's own bookings holding the slot. `http.setResponseCallback` treats 200-299 and 409 as expected, so they are not counted in the error rate.
+- 409s are the seeded calendar and this run's own earlier bookings holding the slot. `http.setResponseCallback` treats 200-299 and 409 as expected, so they are not counted in the error rate.
 - The p95 is over holds that were **placed** (`hold_created_duration`), not over all hold requests. A rejected hold returns before most of the work happens.
-- Availability p99 is 353.3 ms; the target is on p95.
-
-### Not measured
-
-- **Venue revenue report** — Tier 2, not built. No endpoint to point k6 at.
-- **A dedicated per-room availability endpoint** — not built. The row above is
-  the cross-venue search carrying a 7 day `from`/`to` window, which runs the
-  same anti-join over the same index.
+- The revenue max of 938.7 ms is above the target; the target is on p95, and p99 is 622.1 ms.
 
 ## Machine spec
 
@@ -144,7 +144,7 @@ on GiST `&&` selectivity over `tstzrange`.
 - Materialise candidate rooms in a CTE so the room set leads: 55 index probes instead of a 2,137 row scan.
 - Tenant dimension on the GiST index — `(venue_id, reserved_range)`, or `city` denormalised onto `bookings`.
 
-All three targets are met without them. Related: ARCHITECTURE.md §7.
+All four targets are met without them. Related: ARCHITECTURE.md §7.
 
 ## Files
 

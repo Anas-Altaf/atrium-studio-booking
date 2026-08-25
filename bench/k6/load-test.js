@@ -130,24 +130,38 @@ export function setup() {
   return { token, platform, venueId, rooms, midnight: utcMidnight() };
 }
 
+/**
+ * Every filter the brief names, together: city, minimum capacity, amenity set,
+ * price ceiling and an availability window. The window is the expensive half —
+ * it is an anti-join against 250,000 bookings — and leaving it off would measure
+ * an easier query than the one the target is set for.
+ */
 export function search(data) {
+  const { from, to } = week(data.midnight);
   const res = http.get(
-    `${BASE}/rooms?city=Karachi&minCapacity=10&maxPriceMinor=1200000&amenities=wifi&limit=50`,
+    `${BASE}/rooms?city=Karachi&minCapacity=10&maxPriceMinor=1200000&amenities=wifi`
+    + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=50`,
     auth(data.token),
   );
   check(res, { 'search 200': (r) => r.status === 200 });
 }
 
+/** One room over seven days, through the same GiST index the constraint uses. */
 export function availability(data) {
-  const from = new Date(data.midnight + FIRST_DAY * 86400000).toISOString();
-  const to = new Date(data.midnight + (FIRST_DAY + 7) * 86400000).toISOString();
+  const { from, to } = week(data.midnight);
+  const roomId = data.rooms[exec.scenario.iterationInTest % data.rooms.length];
   const res = http.get(
-    `${BASE}/rooms?city=Karachi&minCapacity=10`
-    + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=50`,
+    `${BASE}/rooms/${roomId}/availability`
+    + `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
     auth(data.token),
   );
   check(res, { 'availability 200': (r) => r.status === 200 });
 }
+
+const week = (midnight) => ({
+  from: new Date(midnight + FIRST_DAY * 86400000).toISOString(),
+  to: new Date(midnight + (FIRST_DAY + 7) * 86400000).toISOString(),
+});
 
 /** The brief's fourth target: one venue's books over 30 days. */
 export function revenue(data) {
@@ -218,7 +232,7 @@ function utcMidnight() {
 /** The table that goes into LOAD_TEST.md, generated rather than transcribed. */
 export function handleSummary(data) {
   const phases = [
-    ['Availability window, 7 day range', 'availability', 300],
+    ['Room availability, 7 day range', 'availability', 300],
     ['Cross-venue search, combined filters', 'search', 500],
     ['Create hold', 'hold', 250],
     ['Venue revenue report, 30 days', 'revenue', 800],
