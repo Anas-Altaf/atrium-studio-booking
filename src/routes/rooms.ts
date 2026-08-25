@@ -26,6 +26,19 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get<{ Params: { id: string } }>(
+    '/rooms/:id',
+    { onRequest: [app.authenticate] },
+    async (req) => roomService.findById(req.scope, req.params.id),
+  );
+
+  /** The equipment the room's venue rents out, for building a hold. */
+  app.get<{ Params: { id: string } }>(
+    '/rooms/:id/equipment',
+    { onRequest: [app.authenticate] },
+    async (req) => roomService.equipment(req.scope, req.params.id),
+  );
+
+  app.get<{ Params: { id: string } }>(
     '/rooms/:id/availability',
     { onRequest: [app.authenticate] },
     async (req) => {

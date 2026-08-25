@@ -20,6 +20,12 @@ export async function findForBooking(
   return rows[0];
 }
 
+export interface RoomDetail extends RoomSearchRow {
+  venue_name: string;
+  min_duration_min: number;
+  max_duration_min: number;
+}
+
 /** Outside a transaction, for reads that are not part of a hold. */
 export async function findVisible(
   scope: AuthScope, roomId: string,
@@ -27,6 +33,27 @@ export async function findVisible(
   const pred = venuePredicate(scope, 'venue_id', 2);
   const rows = await query<{ id: string; venue_id: string }>(
     `SELECT id, venue_id FROM rooms WHERE id = $1 AND ${pred.sql}`,
+    [roomId, ...pred.params],
+  );
+  return rows[0];
+}
+
+/**
+ * One room, with what a detail page needs. The availability endpoint answers
+ * "when", not "what", so a deep link to a room has nowhere else to get its
+ * name, rate or duration bounds.
+ */
+export async function findDetail(
+  scope: AuthScope, roomId: string,
+): Promise<RoomDetail | undefined> {
+  const pred = venuePredicate(scope, 'r.venue_id', 2);
+  const rows = await query<RoomDetail>(
+    `SELECT r.id, r.venue_id, r.name, r.city, r.capacity, r.hourly_rate_minor,
+            r.amenities, r.min_duration_min, r.max_duration_min,
+            v.name AS venue_name
+     FROM   rooms r
+     JOIN   venues v ON v.id = r.venue_id
+     WHERE  r.id = $1 AND ${pred.sql}`,
     [roomId, ...pred.params],
   );
   return rows[0];

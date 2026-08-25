@@ -4,8 +4,8 @@
  * in force when it was created (4B).
  */
 import { withTransaction } from '../db/pool.js';
-import { type AuthScope, isPlatformAdmin, isVenueAdmin } from '../auth/scope.js';
-import { forbidden } from '../errors.js';
+import { type AuthScope, isPlatformAdmin, isVenueAdmin, isVenueScoped } from '../auth/scope.js';
+import { forbidden, notFound } from '../errors.js';
 import type { RefundTier } from '../domain/types.js';
 import * as venueRepo from '../repositories/venueRepo.js';
 
@@ -13,6 +13,23 @@ export interface PublishedPolicy {
   venueId: string;
   policyVersionId: string;
   tiers: RefundTier[];
+}
+
+/**
+ * The terms a venue publishes today.
+ *
+ * A customer reads these before booking, so they are not confined the way a
+ * venue's operational data is — but a venue-scoped caller stays inside their
+ * own venue, because INV-6 does not bend for a convenience read.
+ */
+export async function currentPolicy(
+  scope: AuthScope, venueId: string,
+): Promise<venueRepo.PublishedPolicy> {
+  if (isVenueScoped(scope) && scope.venueId !== venueId) throw notFound('venue not found');
+
+  const policy = await venueRepo.currentPolicy(venueId);
+  if (!policy) throw notFound('venue not found');
+  return policy;
 }
 
 export async function publishPolicy(

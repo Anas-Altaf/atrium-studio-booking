@@ -115,6 +115,58 @@ export async function lineItems(tx: Tx, bookingId: string): Promise<EquipmentLin
   return rows;
 }
 
+export interface BookingListRow extends BookingRow {
+  room_name: string;
+  venue_name: string;
+  city: string;
+}
+
+export interface BookingFilter {
+  status?: string[];
+  from?: string;
+  to?: string;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * A caller's bookings, newest first.
+ *
+ * Room and venue names are joined in because every screen that lists bookings
+ * shows them, and the alternative is the caller fetching each room separately.
+ *
+ * `ORDER BY start_at DESC` matches `bookings_user_time_idx` for a customer and
+ * `bookings_venue_time_idx` for staff.
+ */
+export async function list(
+  scope: AuthScope, filter: BookingFilter,
+): Promise<BookingListRow[]> {
+  const params: unknown[] = [];
+  const p = (v: unknown) => `$${params.push(v)}`;
+  const where: string[] = [];
+
+  const pred = scopePredicate(scope, { venue: 'b.venue_id', user: 'b.user_id' }, 1);
+  if (pred.params.length) { params.push(...pred.params); }
+  where.push(pred.sql);
+
+  if (filter.status?.length) where.push(`b.status = ANY(${p(filter.status)}::booking_status[])`);
+  if (filter.from) where.push(`b.start_at >= ${p(filter.from)}`);
+  if (filter.to) where.push(`b.start_at < ${p(filter.to)}`);
+
+  return query<BookingListRow>(
+    `SELECT b.id, b.venue_id, b.room_id, b.user_id, b.status, b.start_at, b.end_at,
+            b.expires_at, b.policy_version_id, b.total_minor,
+            r.name AS room_name, v.name AS venue_name, r.city
+     FROM   bookings b
+     JOIN   rooms  r ON r.id = b.room_id
+     JOIN   venues v ON v.id = b.venue_id
+     WHERE  ${where.join(' AND ')}
+     ORDER  BY b.start_at DESC
+     LIMIT  ${p(filter.limit)} OFFSET ${p(filter.offset)}`,
+    params,
+  );
+}
+
 /** INV-6: scoped in the predicate, so another venue's booking is not found rather than refused. */
 export async function findById(scope: AuthScope, id: string): Promise<BookingRow | undefined> {
   const pred = scopePredicate(scope, { venue: 'b.venue_id', user: 'b.user_id' }, 2);

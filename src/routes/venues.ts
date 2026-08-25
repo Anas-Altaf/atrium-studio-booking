@@ -18,6 +18,13 @@ const policyBody = z.object({
 });
 
 export async function venueRoutes(app: FastifyInstance): Promise<void> {
+  /** The terms a customer agrees to at checkout, and an admin edits from. */
+  app.get<{ Params: { id: string } }>(
+    '/venues/:id/policy',
+    { onRequest: [app.authenticate] },
+    async (req) => venueService.currentPolicy(req.scope, req.params.id),
+  );
+
   app.patch<{ Params: { id: string } }>(
     '/venues/:id/policy',
     { onRequest: [app.authenticate] },

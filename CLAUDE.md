@@ -34,6 +34,7 @@ A change that risks any of these must be stopped and flagged before code is writ
 - `PATCH /venues/:id/policy` — policy is data, live with no deployment
 - `GET /reports/reconciliation` (INV-5) — zero discrepancies on the demo profile
 - `GET /rooms/:id/availability`
+- Reads a client needs: `GET /bookings`, `GET /rooms/:id`, `GET /rooms/:id/equipment`, `GET /venues/:id/policy`
 - Soak under chaos (`node bench/soak.mjs`) — INV-3, INV-4, INV-5 with three replicas and nothing driven by hand
 - Seed script (`--profile=demo` and `--profile=full`)
 - Full-profile benchmark with k6 (p50/p95/p99, EXPLAIN before/after, machine spec)

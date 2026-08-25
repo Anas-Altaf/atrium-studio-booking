@@ -110,6 +110,20 @@ export async function startCheckout(
   });
 }
 
+/**
+ * What the caller may see, by their own scope: a customer their bookings, staff
+ * and admins their venue's, a platform admin everything. The predicate decides,
+ * so there is no role branching here.
+ */
+export async function list(
+  scope: AuthScope, filter: bookingRepo.BookingFilter,
+): Promise<bookingRepo.BookingListRow[]> {
+  if (filter.from && filter.to && Date.parse(filter.to) <= Date.parse(filter.from)) {
+    throw badRequest('BAD_INTERVAL', 'to must be after from.');
+  }
+  return bookingRepo.list(scope, filter);
+}
+
 export async function findById(scope: AuthScope, id: string): Promise<BookingRow> {
   const booking = await bookingRepo.findById(scope, id);
   if (!booking) throw notFound('booking not found');

@@ -1,8 +1,27 @@
 import { badRequest, notFound } from '../errors.js';
 import type { AuthScope } from '../auth/scope.js';
 import type { OperatingHours, RoomSearch, RoomSearchRow } from '../domain/types.js';
+import * as equipmentRepo from '../repositories/equipmentRepo.js';
 import * as roomRepo from '../repositories/roomRepo.js';
 import * as venueRepo from '../repositories/venueRepo.js';
+
+export async function findById(scope: AuthScope, roomId: string): Promise<roomRepo.RoomDetail> {
+  const room = await roomRepo.findDetail(scope, roomId);
+  if (!room) throw notFound('room not found');
+  return room;
+}
+
+/**
+ * What the room's venue rents out. Resolved through the room so the caller
+ * needs only the id it already has, and so the scope check happens once.
+ */
+export async function equipment(
+  scope: AuthScope, roomId: string,
+): Promise<equipmentRepo.EquipmentOffer[]> {
+  const room = await roomRepo.findVisible(scope, roomId);
+  if (!room) throw notFound('room not found');
+  return equipmentRepo.listForVenue(room.venue_id);
+}
 
 export interface Availability {
   roomId: string;

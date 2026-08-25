@@ -13,7 +13,23 @@ const holdBody = z.object({
   })).default([]),
 });
 
+const listQuery = z.object({
+  status: z.string()
+    .transform((v) => v.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean))
+    .optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
 export async function bookingRoutes(app: FastifyInstance): Promise<void> {
+  /** Scoped by role: a customer's own, a venue's, or everything. */
+  app.get('/bookings', { onRequest: [app.authenticate] }, async (req) => {
+    const filter = listQuery.parse(req.query);
+    return bookingService.list(req.scope, filter);
+  });
+
   app.post('/bookings/hold', { onRequest: [app.authenticate] }, async (req, reply) => {
     const body = holdBody.parse(req.body);
     const booking = await bookingService.createHold(req.scope, body);

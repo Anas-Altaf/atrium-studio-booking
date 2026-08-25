@@ -25,6 +25,28 @@ export async function localWindow(
   return row;
 }
 
+export interface PublishedPolicy {
+  policy_version_id: string;
+  tiers: RefundTier[];
+  published_at: Date;
+}
+
+/**
+ * The terms a venue is publishing right now, for a customer to read before
+ * booking and an admin to read before editing. Not the terms of any existing
+ * booking — those come from its own version.
+ */
+export async function currentPolicy(venueId: string): Promise<PublishedPolicy | undefined> {
+  const rows = await query<PublishedPolicy>(
+    `SELECT p.id AS policy_version_id, p.tiers, p.created_at AS published_at
+     FROM   venues v
+     JOIN   refund_policy_versions p ON p.id = v.current_policy_version_id
+     WHERE  v.id = $1`,
+    [venueId],
+  );
+  return rows[0];
+}
+
 /** No scope: a venue's published hours are not tenant data. */
 export async function operatingHours(venueId: string): Promise<OperatingHours | null> {
   const rows = await query<{ operating_hours: OperatingHours }>(

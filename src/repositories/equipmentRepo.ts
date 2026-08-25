@@ -1,5 +1,28 @@
+import { query } from '../db/pool.js';
 import type { Tx } from '../db/pool.js';
 import type { EquipmentTypeRow } from '../domain/types.js';
+
+export interface EquipmentOffer {
+  id: string;
+  name: string;
+  hourly_rate_minor: number;
+  units_owned: number;
+}
+
+/**
+ * What a venue rents out, for the caller building a hold.
+ *
+ * `overbooking_buffer` is left out: it is an operational setting, not something
+ * a customer chooses against. `units_owned` is the ceiling, not availability —
+ * that depends on the interval and is settled at hold time.
+ */
+export async function listForVenue(venueId: string): Promise<EquipmentOffer[]> {
+  return query<EquipmentOffer>(
+    `SELECT id, name, hourly_rate_minor, units_owned
+     FROM   equipment_types WHERE venue_id = $1 ORDER BY name`,
+    [venueId],
+  );
+}
 
 /**
  * `ORDER BY id` is not cosmetic: two concurrent holds naming the same two types
