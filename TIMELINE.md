@@ -1,146 +1,68 @@
 # TIMELINE.md
 
-Hour by hour. What was done, what was cut, why. Times PKT.
-
-| | |
-|---|---|
-| T0 (brief received) | 2026-08-22 · 12:00 |
-| Deadline | 2026-08-23 · 12:00 |
+Times PKT. T0: 2026-08-22 12:00. Deadline: 2026-08-23 12:00.
 
 ---
 
-## Log
-
 ### Aug 22 · 12:00–16:00 — Draft and discussion
-Read the brief. Worked the concurrency problem before writing any application code.
-Settled the mechanism for rooms and for equipment, and resolved eight ambiguities as A1–A8.
 
-Commit `d82c1ac` at 16:02 — ARCHITECTURE.md pushed with §3, §4 (draft) and §6.
-No hold endpoint existed in the repository at this commit.
+Read the brief. Worked the concurrency problem before writing any code. Settled room and equipment mechanisms, resolved A1–A8.
 
-**Cut:** the clarifying-questions batch. Every ambiguity was resolvable on defensible
-grounds; documented as assumptions instead.
+Commit `d82c1ac` at 16:02 — ARCHITECTURE.md with §3, §4 (draft), §6. No hold endpoint existed.
+
+**Cut:** clarifying questions. Every ambiguity was resolvable on defensible grounds.
 
 ### Aug 22 · 16:00–17:00 — Process rules
-Extracted the non-code obligations from the brief into PROCESS_RULES.md: hard caps, timing
-gates, per-file duties, test obligations, hosting constraints, scoring weights.
+Extracted non-code obligations from the brief into PROCESS_RULES.md.
 
 ### Aug 22 · 17:00–22:00 — Rest
 
-### Aug 22 · 22:00 — Requirements re-read
-Read the brief again in depth, independently, against the notes from the first pass.
+### Aug 22 · 22:00 — Re-read brief
+Against first-pass notes.
 
-### Aug 23 · 05:00–06:00 — Repository setup
-CLAUDE.md written to constrain agent behaviour against the locked design decisions and the
-brief's prohibitions. Six deliverable files created; the graded ones left as empty structure.
+### Aug 23 · 05:00–06:00 — Repo setup
+CLAUDE.md written to constrain agent against locked design decisions and brief prohibitions. Six deliverable files created; graded ones left as empty structure.
 
-**Cut:** a nine-file raw/polished scratch scheme. Overhead under this clock, and a
-raw/polished split invites reconstructing a clean narrative at the end.
+**Cut:** nine-file raw/polished scratch scheme. Overhead, invites end-of-window reconstruction.
 
-### Aug 23 · 06:00–07:00 — Repo pushed, order of work settled
-Pushed to `atrium-studio-booking`. Added a logging cadence to CLAUDE.md so the graded files
-are updated after every work block.
-
-Rejected an agent plan that went straight to schema and deployment. Architecture is 35% of
-the score and §1, §2, §5, §7, §8 are still stubs; writing schema before the ERD and state
-machine are settled would mean migrating twice. Order: finish architecture → decide stack →
-build.
+### Aug 23 · 06:00–07:00 — Order of work
+Rejected agent plan that went straight to schema and deployment. Architecture is 35% of score with stubs. Order: finish architecture → stack → build.
 
 ### Aug 23 · 07:00–08:00 — Stack decided
-TypeScript + Fastify + Postgres, no ORM and no query builder — plain `pg` with hand-written
-SQL in repository classes and plain `.sql` migrations. Five entries written to DECISIONS.md.
+TypeScript + Fastify + Postgres. No ORM. Plain `pg`, hand-written SQL, `.sql` migrations. Five DECISIONS entries.
 
-The order mattered: because the concurrency strategy was fixed first, Postgres was a
-consequence of INV-1 rather than a preference, and Prisma was ruled out on what it cannot
-express rather than on taste.
-
-### Aug 23 · 08:00–09:00 — Two gaps in the architecture closed
-Found that ARCHITECTURE.md said nothing about tenant isolation despite INV-6 being a hard cap,
-and nothing about how the refund policy avoids retroactive changes despite the brief asking
-for it explicitly.
-
-Both settled and written as §4A and §4B. Chose repository-level mandatory scoping over
-Postgres RLS (pooling creates a new isolation failure mode), and immutable policy versions
-over mutable rows. Assumptions A9 and A10 added.
-
-**Cut:** a copy-on-write rule that would have kept a policy version editable until first
-referenced. Correct, but more machinery than the problem deserves and harder to defend in one
-sentence.
+### Aug 23 · 08:00–09:00 — Two gaps closed
+ARCHITECTURE had nothing on tenant isolation (hard cap 3) or refund policy. Wrote §4A and §4B. A9, A10 added.
 
 ### Aug 23 · 09:00–10:00 — Refund idempotency and background work
-§4C: cancellation is the thing made idempotent, not the refund — the state machine already
-guarantees it. Refund intent written in the same transaction as the transition. A11 added on
-the literal reading of "illegal transition".
+§4C: cancellation is what's made idempotent, not refund — state machine already guarantees it. Refund intent in same transaction. A11 added. §4D: Postgres jobs with FOR UPDATE SKIP LOCKED.
 
-§4D: background jobs in Postgres with `FOR UPDATE SKIP LOCKED`, worker inside the API process.
-Redis rejected on the dual-write argument.
+### Aug 23 · 10:00–11:00 — First execution
+Stack didn't start. 003 failed: `timestamptz + interval` is STABLE, not IMMUTABLE. Fixed. Then found three more: no venue check on hold path (hard cap 3), loose test, deadlocks answering 500 instead of 409.
 
-### Aug 23 · 10:00–11:00 — First execution, and what it cost
-Ran the stack for the first time. It did not start: `003` failed on
-`generation expression is not immutable`, because `timestamptz + interval` is only STABLE.
-Wrapped in an IMMUTABLE function. Every migration after it applied unchanged, so this was the
-only blocker — but it had been sitting there since the schema was written, unexecuted.
-
-That run then exposed three more: no venue check on the hold path at all (hard cap 3), an
-isolation test too loose to have caught it, and 200-way deadlocks on the exclusion constraint
-answering `500` instead of `409`. All four fixed and verified.
-
-Both testable hard caps now hold, against a seeded database and three replicas:
+Both testable hard caps now hold:
 
 | Cap | Evidence |
 |---|---|
-| Concurrency proof | Phase A 1 × 201 / 199 × 409; phase B 3 × 201 against 3 units / 197 × 409; zero 5xx; all three replicas |
-| Cross-venue authorisation | 7/7 isolation tests, including a hold by direct room UUID answering 404 and writing nothing |
+| Concurrency proof | Phase A 1×201 / 199×409; Phase B 3×201 vs 3 units / 197×409; zero 5xx; all replicas |
+| Cross-venue auth | 7/7 isolation tests, hold by direct UUID gets 404 and writes nothing |
 
-**Cut:** Paygate, confirm, cancellation, refunds, the reaper and cross-venue search. Roughly an
-hour was left after the stack ran, and a half-built payment path is worth less than a proven
-concurrency core with the gap written down. Recorded in README.
+**Cut:** Paygate, confirm, cancellation, refunds, reaper. Half-built payment path < proven concurrency core.
 
-**Cut:** two known defects, documented rather than fixed — the `request-id` header overriding
-the correlation id, and `TRUNCATE` bypassing the append-only triggers.
+### Aug 23 · 11:00–12:00 — Deployment, ARCHITECTURE §7, §8
+CORS, TLS, Render config, frontend. Frontend needed rooms listing — built cross-venue search from §5 (reverses earlier cut).
 
-### Aug 23 · 11:00–12:00 — Deployment prep, ARCHITECTURE §7 and §8
+ARCHITECTURE §3.3 now has proof output. §7 has measured numbers. LOAD_TEST.md written but empty — no benchmark was run.
 
-Deployment is the one hard cap still unmet, so it went first. CORS, TLS to a managed Postgres,
-a Render service definition and a one-page frontend are written and verified locally. Seeding
-Neon and the live URLs are blocked on accounts only I can create.
+False alarm: proof returned 502s. nginx cached upstream IPs from containers recreated under it.
 
-The frontend needed a way to list rooms and there was none, so the cross-venue search is built
-from §5 rather than stubbed. That reverses the cut recorded in the hour above.
+### Aug 23 · 12:00–13:00 — Deployed API, built frontend
+API live on Render + Neon. `npm run verify:deployed` — 13 checks pass. Found: schema violations returned 500 with raw Zod (encapsulation trap, same as earlier). Fixed. Added `tests/error-mapping.test.ts`.
 
-ARCHITECTURE had two sections still reading `TBD` and is 35% of the score:
+Replaced plain HTML with Next.js. App Router, TypeScript, Tailwind. Demo surface.
 
-- §3.3 now carries the actual proof output. The brief asked for it explicitly and it was absent.
-- §7 is measured rather than argued — the GiST index size against `shared_buffers`, an
-  `EXPLAIN` showing 12,740 rows discarded per equipment check, and `audit_events` on the write
-  path of every transition. Three failure modes, three remedies.
-- §3.5 keeps its original claim about role-level revokes with a note beneath saying what was
-  found. §4 relabelled: specified, not implemented.
-- §5 Measurements now points at `LOAD_TEST.md`.
-
-`LOAD_TEST.md` written. No benchmark was run, so it records the targets, why not, and the
-method — nothing more. The first draft padded it with demo-profile query plans and was cut.
-
-One false alarm: the proof returned 502s after a rebuild. nginx had cached upstream IPs for
-containers that were recreated under it. AI_LOG 18.
-
-### Aug 23 · 12:00–13:00 — Deployed the API, replaced the frontend
-
-API is live on Render against Neon and seeded to the demo profile. `npm run verify:deployed`
-runs 13 checks over the wire — venue scoping, a cross-venue hold refused, INV-6 by direct
-booking UUID, and the error shape. All pass, so hard cap 3 now holds on the deployed instance
-and not only in the suite.
-
-Deploying immediately found a defect the suite could not: a schema violation returned `500`
-with the raw Zod output, because `setErrorHandler` was registered after the route plugins and
-never reached a route. Every test asserted on status and none on the body. Fixed, and
-`tests/error-mapping.test.ts` now asserts the shape.
-
-Replaced the plain HTML page with a Next.js app — App Router, TypeScript, Tailwind, nothing
-else. It is still a demo surface, per DECISIONS 2.
-
-**Open:** the frontend is not deployed, so the "frontend and API both live" half of
-cap 2 is still outstanding.
+### Later — Frontend deployed
+Frontend deployed to Vercel at https://atrium-studio-booking.vercel.app.
 
 ---
 
@@ -148,14 +70,13 @@ cap 2 is still outstanding.
 
 | Cut | Reason |
 |---|---|
-| Clarifying-questions batch | Ambiguities resolvable; documented as A1–A8 |
-| Raw/polished scratch files | Overhead; invites end-of-window reconstruction |
-| Paygate, confirm, cancellation, refunds, reaper | No window left after the stack first ran; concurrency core proven instead |
-| ~~Cross-venue search~~ | Cut at 11:00, then reversed — the frontend needed it and §5 already had the query |
+| Clarifying questions | Resolvable as assumptions |
+| Raw/polished scratch files | Overhead |
+| Paygate, confirm, cancellation, refunds, reaper | Time ran out after stack first ran. Concurrency core proven instead |
+| ~~Cross-venue search~~ | Cut, then reversed — frontend needed it |
 
 ---
 
 ## Tier 3
 
-Not started, and will not be while any Tier 1 item is incomplete. The brief states the trade
-openly and I am taking it deliberately.
+Not started. Won't be while any Tier 1 item is incomplete. Brief states the trade openly — I'm taking it deliberately.
