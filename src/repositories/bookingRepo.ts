@@ -94,6 +94,25 @@ export async function transition(
   return (rowCount ?? 0) > 0;
 }
 
+/**
+ * Pushes a hold's expiry out, which the trigger records as HELD -> HELD.
+ *
+ * `GREATEST` so re-entering checkout can only ever lengthen the window, never
+ * cut short a hold that already has more time than the checkout allowance.
+ */
+export async function reissueHold(
+  tx: Tx, id: string, minutes: number,
+): Promise<Date | undefined> {
+  const { rows } = await tx.query<{ expires_at: Date }>(
+    `UPDATE bookings
+     SET    expires_at = GREATEST(expires_at, now() + ($2 || ' minutes')::interval)
+     WHERE  id = $1 AND status = 'HELD'
+     RETURNING expires_at`,
+    [id, String(minutes)],
+  );
+  return rows[0]?.expires_at;
+}
+
 /** Rates as frozen at hold, not as the equipment type charges today. */
 export async function lineItems(tx: Tx, bookingId: string): Promise<EquipmentLineItem[]> {
   const { rows } = await tx.query<EquipmentLineItem>(

@@ -25,7 +25,7 @@ A change that risks any of these must be stopped and flagged before code is writ
 - Append-only audit enforcement (layer 2: triggers, layer 3: TRUNCATE guards)
 - Error handling (400/401/404/409 shapes, correlation id on every response)
 - Paygate mock provider with all 6 chaos modes
-- Checkout → charge → confirm flow
+- Checkout → charge → confirm flow, with `POST /bookings/:id/checkout` re-issuing the hold for the 10 minute window (A1)
 - Webhook handler + SKIP LOCKED worker
 - Hold reaper — covers HELD and PENDING_PAYMENT (migration 010)
 - INV-4 — a capture on an expired hold refunds, never confirms

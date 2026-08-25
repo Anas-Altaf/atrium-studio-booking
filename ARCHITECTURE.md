@@ -327,7 +327,7 @@ Options considered but not applied are in [`LOAD_TEST.md`](./LOAD_TEST.md).
 
 | # | Ambiguity | Resolution |
 |---|---|---|
-| A1 | Hold TTL is 8 min but customers need ≥10 min at checkout. These are incompatible as written | Reaching checkout re-issues the hold with `expires_at = now() + 10 min`. The 8-min TTL governs holds that never reach checkout |
+| A1 | Hold TTL is 8 min but customers need ≥10 min at checkout. These are incompatible as written | Reaching checkout re-issues the hold with `expires_at = now() + 10 min`. The 8-min TTL governs holds that never reach checkout. `POST /bookings/:id/checkout`, audited as HELD → HELD so a slot held by repeated checkouts is visible |
 | A2 | Does the 10% overbooking buffer apply to rooms too? | **EquipmentType only.** For a single-unit room, 10% of 1 floors to 0 regardless |
 | A3 | Does the buffer apply to held or only confirmed? | Effective capacity in all blocking states |
 | A4 | Venues span Karachi, Dubai, London. London observes DST | All timestamps `timestamptz` in UTC. Each venue carries an IANA timezone. Operating-hours checks and refund boundaries evaluated in venue-local time |

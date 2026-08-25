@@ -77,6 +77,43 @@ export async function createHold(scope: AuthScope, req: HoldRequest): Promise<Bo
   });
 }
 
+/**
+ * Reaching the checkout screen.
+ *
+ * The brief's two rules are incompatible as written: a hold expires after 8
+ * minutes, and a customer at checkout must have at least 10. This is where they
+ * are reconciled — arriving at checkout re-issues the hold, so the 8 minute TTL
+ * only governs holds abandoned before checkout (A1).
+ *
+ * The trigger audits it as HELD -> HELD, so a slot held for an hour by repeated
+ * checkouts is visible rather than silent.
+ */
+export async function startCheckout(
+  scope: AuthScope, bookingId: string,
+): Promise<{ bookingId: string; expiresAt: Date; windowMinutes: number }> {
+  const visible = await bookingRepo.findById(scope, bookingId);
+  if (!visible) throw notFound('booking not found');
+
+  return withTransaction({ actorId: scope.userId, reason: 'checkout re-issued the hold' }, async (tx) => {
+    const booking = await bookingRepo.lockById(tx, bookingId);
+    if (!booking) throw notFound('booking not found');
+
+    if (booking.status !== 'HELD') {
+      throw conflict('NOT_HELD', `Checkout starts from a held booking, not ${booking.status}.`);
+    }
+    // Past its TTL, the reaper either has it or is about to. Extending here
+    // would race the expiry rather than prevent it.
+    if (booking.expires_at && booking.expires_at.getTime() <= Date.now()) {
+      throw badRequest('HOLD_EXPIRED', 'That hold has expired. Take the slot again.');
+    }
+
+    const expiresAt = await bookingRepo.reissueHold(tx, bookingId, config.checkoutWindowMinutes);
+    if (!expiresAt) throw conflict('NOT_HELD', 'That booking is no longer held.');
+
+    return { bookingId, expiresAt, windowMinutes: config.checkoutWindowMinutes };
+  });
+}
+
 export async function findById(scope: AuthScope, id: string): Promise<BookingRow> {
   const booking = await bookingRepo.findById(scope, id);
   if (!booking) throw notFound('booking not found');

@@ -31,6 +31,13 @@ export async function bookingRoutes(app: FastifyInstance): Promise<void> {
     async (req) => bookingService.findById(req.scope, req.params.id),
   );
 
+  /** Re-issues the hold for the checkout window the brief guarantees (A1). */
+  app.post<{ Params: { id: string } }>(
+    '/bookings/:id/checkout',
+    { onRequest: [app.authenticate] },
+    async (req) => bookingService.startCheckout(req.scope, req.params.id),
+  );
+
   /** 200 either way: a repeat cancel is a replay, and returns the same refund. */
   app.post<{ Params: { id: string } }>(
     '/bookings/:id/cancel',

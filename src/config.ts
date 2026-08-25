@@ -4,6 +4,10 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5432/atrium',
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-do-not-use-in-production',
   holdTtlMinutes: 8,
+  // The brief gives a hold 8 minutes and a customer at checkout at least 10.
+  // Reaching checkout re-issues the hold, so the shorter TTL only ever governs
+  // holds that were abandoned before checkout (A1).
+  checkoutWindowMinutes: 10,
   instanceId: process.env.INSTANCE_ID ?? 'api-local',
 
   paygateUrl: process.env.PAYGATE_URL ?? 'http://localhost:4000',
