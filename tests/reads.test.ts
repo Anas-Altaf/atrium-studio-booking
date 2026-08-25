@@ -170,19 +170,34 @@ describe('GET /rooms/:id/equipment', () => {
 });
 
 describe('GET /bookings', () => {
-  it('returns a customer their own bookings, newest first', async () => {
+  it('returns a customer their own booking, with the names a list needs', async () => {
     const id = await hold(customer);
+    const { body: booking } = await get(`/bookings/${id}`, customer);
+    const startedAt = Date.parse((booking as { start_at: string }).start_at);
 
-    const res = await get('/bookings?limit=50', customer);
+    // Windowed rather than "the first page": on the full profile this customer
+    // has bookings two years out, so a booking ten weeks away is nowhere near
+    // the top of a start_at DESC page, and the assertion would depend on which
+    // seed profile happened to be loaded.
+    const res = await get(
+      `/bookings?from=${encodeURIComponent(new Date(startedAt - 3_600_000).toISOString())}`
+      + `&to=${encodeURIComponent(new Date(startedAt + 3_600_000).toISOString())}&limit=100`,
+      customer,
+    );
     expect(res.status).toBe(200);
 
-    const bookings = res.body as Record<string, unknown>[];
-    const mine = bookings.find((b) => b.id === id);
+    const mine = (res.body as Record<string, unknown>[]).find((b) => b.id === id);
     expect(mine).toBeTruthy();
     expect(mine!.room_name).toBe('Reads Studio');
     expect(mine!.venue_name).toBeTruthy();
+  });
 
-    const starts = bookings.map((b) => new Date(b.start_at as string).getTime());
+  it('orders newest first', async () => {
+    const res = await get('/bookings?limit=50', customer);
+    expect(res.status).toBe(200);
+
+    const starts = (res.body as Record<string, unknown>[])
+      .map((b) => new Date(b.start_at as string).getTime());
     expect([...starts].sort((a, b) => b - a)).toEqual(starts);
   });
 
