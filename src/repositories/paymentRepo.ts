@@ -6,7 +6,9 @@ export interface PaymentRow {
   booking_id: string;
   charge_id: string | null;
   idempotency_key: string;
-  status: 'PENDING' | 'CAPTURED' | 'FAILED' | 'REFUNDED';
+  // The enum has three members. A refund lives in `refunds`; the payment that
+  // was returned stays CAPTURED, and reconciliation joins the two.
+  status: 'PENDING' | 'CAPTURED' | 'FAILED';
   amount_minor: number;
   currency: string;
 }
@@ -64,6 +66,14 @@ export async function attachChargeId(
     `UPDATE payments SET charge_id = $2, updated_at = now() WHERE id = $1`,
     [paymentId, chargeId],
   );
+}
+
+export async function findById(tx: Tx, id: string): Promise<PaymentRow | undefined> {
+  const { rows } = await tx.query<PaymentRow>(
+    `SELECT ${COLUMNS} FROM payments WHERE id = $1`,
+    [id],
+  );
+  return rows[0];
 }
 
 export async function findByChargeId(

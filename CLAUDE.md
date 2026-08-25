@@ -27,7 +27,10 @@ A change that risks any of these must be stopped and flagged before code is writ
 - Paygate mock provider with all 6 chaos modes
 - Checkout → charge → confirm flow
 - Webhook handler + SKIP LOCKED worker
+- Hold reaper — covers HELD and PENDING_PAYMENT (migration 010)
+- INV-4 — a capture on an expired hold refunds, never confirms
 - Retry driver for refunds
+- Soak under chaos (`node bench/soak.mjs`) — INV-3, INV-4, INV-5 with three replicas and nothing driven by hand
 - Seed script (`--profile=demo` and `--profile=full`)
 - Full-profile benchmark with k6 (p50/p95/p99, EXPLAIN before/after, machine spec)
 - Health endpoint that checks the database
@@ -37,8 +40,8 @@ A change that risks any of these must be stopped and flagged before code is writ
 
 ### Not built
 - Cancellation endpoint + refund calculator
-- Hold reaper (expired bookings block their slot forever right now)
 - Reconciliation report (INV-5)
+- Per-room availability endpoint
 
 ---
 

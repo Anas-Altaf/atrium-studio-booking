@@ -46,6 +46,26 @@ export async function insertLineItem(
   );
 }
 
+/**
+ * Worker: holds past their TTL.
+ *
+ * PENDING_PAYMENT as well as HELD — a hold that expires while payment is in
+ * flight is the case INV-4 is about. Nothing expires by the passage of time:
+ * the exclusion constraint's WHERE cannot reference now(), so a hold past its
+ * TTL still blocks its slot until something moves it.
+ */
+export async function claimExpired(tx: Tx, limit: number): Promise<BookingRow[]> {
+  const { rows } = await tx.query<BookingRow>(
+    `SELECT ${COLUMNS} FROM bookings
+     WHERE  status IN ('HELD', 'PENDING_PAYMENT') AND expires_at < now()
+     ORDER  BY expires_at
+     FOR    UPDATE SKIP LOCKED
+     LIMIT  $1`,
+    [limit],
+  );
+  return rows;
+}
+
 /** No AuthScope: both callers reach it having already established who may act. */
 export async function lockById(tx: Tx, id: string): Promise<BookingRow | undefined> {
   const { rows } = await tx.query<BookingRow>(

@@ -195,7 +195,11 @@ Phase B is the meaningful one — 200 different rooms means the room constraint 
 
 A hold past its TTL but not yet reaped still blocks its slot — the exclusion constraint's WHERE clause can't reference `now()` (index predicates must be IMMUTABLE). So the system may transiently under-sell but never oversell. That's the correct direction to fail.
 
-A background reaper transitions HELD rows past `expires_at` to EXPIRED on ~15s interval. It's idempotent and safe to run on all three replicas. **Not built yet** — `bookings_reaper_idx` exists for it.
+A background reaper transitions rows past `expires_at` to EXPIRED once per worker tick, through the same trigger as any other transition, so each expiry is validated and audited. Idempotent and safe on all three replicas.
+
+It covers `PENDING_PAYMENT` as well as `HELD`. `bookings_reaper_idx` was partial on HELD alone (007), which left out the one state INV-4 is about — a hold that runs out while the charge is in flight. Migration 010 widens it.
+
+What the absence of a reaper costs, measured rather than argued: 6,401 unreaped holds accumulated locally, and the 200-request concurrency proof began failing on 504s and pool timeouts while INV-1 itself still held. Expiring them restored it. The slot was never double-booked; the system just stopped being able to answer.
 
 ### 3.5 Transition enforcement
 
@@ -263,7 +267,9 @@ Both commit or neither. A worker drives PENDING to Paygate with Idempotency-Key 
 
 ## 4D. Background work
 
-Four jobs: hold reaper, refund driver, webhook processor, unmatched-webhook sweeper.
+Three jobs: hold reaper, charge submitter, webhook processor, refund driver.
+
+An earlier draft listed a fourth — a sweeper for webhooks naming a charge that is not recorded yet. It is not needed. Such an event is written to `unmatched_webhooks` for visibility and then deferred with the same exponential backoff every other delivery uses, so when the charge lands the ordinary retry applies it. A charge that never lands stops being retried and surfaces in the reconciliation report instead. One mechanism rather than two.
 
 I use Postgres tables polled with `FOR UPDATE SKIP LOCKED` instead of a queue. An external queue makes enqueueing a second write — commit the booking, then enqueue. A crash between them loses the job silently, which is INV-5 inverted. In one database the job row and the business change are the same commit. SKIP LOCKED passes over rows another transaction holds, so three replicas polling the same table take disjoint work without waiting.
 

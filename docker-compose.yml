@@ -46,6 +46,10 @@ services:
     environment: &api-env
       DATABASE_URL: postgres://atrium:atrium@db:5432/atrium
       JWT_SECRET: dev-secret-do-not-use-in-production
+      # The worker submits charges here, and the webhook handler verifies
+      # deliveries against this secret. Both must match the paygate service.
+      PAYGATE_URL: http://paygate:4000
+      PAYGATE_SECRET: paygate-dev-secret
       INSTANCE_ID: api-1
       PORT: "3000"
     depends_on:

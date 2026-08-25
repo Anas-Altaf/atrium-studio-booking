@@ -16,6 +16,18 @@ npm run proof                         # 200-request concurrency proof
 npm test                              # isolation, error mapping, append-only
 ```
 
+**Stop the API replicas before `npm test`** — `docker compose stop api-1 api-2 api-3`.
+Each replica runs a worker polling the same database once a second, and the
+tests drive those jobs by hand. Left running, they claim the rows a test is
+about to assert on. See Known Issues.
+
+Invariants under chaos, against the running stack:
+
+```
+docker compose up -d --build          # paygate runs with PAYGATE_CHAOS=on
+node bench/soak.mjs                   # INV-3, INV-4, INV-5 with nobody driving the jobs
+```
+
 Benchmark, against the full profile:
 
 ```
@@ -56,11 +68,11 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 | Area | How I would have built it |
 |---|---|
 | **Cancellation + refund calculator** | Policy versions exist, every booking points at one — nothing reads them. Refund intent written in same transaction as cancel transition. Worker drives to Paygate. |
-| **Reaper** | Guarded `UPDATE` on ~15s interval polling `bookings_reaper_idx`. |
 | **Reconciliation report (INV-5)** | Three anti-joins: captures with no CONFIRMED booking, CONFIRMED bookings with no capture, refunds with no matching capture. |
 
 ### Real defects
 
+- **The test suite and the compose workers share a database.** `npm test` drives the worker jobs by hand; three replicas polling the same rows once a second claim them first, and the tests then fail in ways that look like logic errors. Stopping the replicas is the workaround. The fix is a database the tests own — not done.
 - **Append-only took three migrations.** 006 revokes UPDATE/DELETE from `atrium_app`; the app connects as owner, and an owner can't be revoked from its own tables. 008 adds row triggers. `TRUNCATE` produces no row events and passed both, so 009 adds statement-level guards including the cascade path from `bookings`. All three kept. `tests/append-only.test.ts`.
 - **Audit actor read from session variable.** Same mechanism rejected for RLS in §4A. Set with `SET LOCAL` so it can't outlive the transaction — a leak here puts wrong actor on audit row (data quality), not wrong data in the response (isolation).
 - **DST pricing edge.** Bookings are priced on wall-clock hours. Affects a booking spanning a DST transition. Timestamps are `timestamptz` throughout.
