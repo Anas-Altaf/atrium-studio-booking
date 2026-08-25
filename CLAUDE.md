@@ -30,6 +30,10 @@ A change that risks any of these must be stopped and flagged before code is writ
 - Hold reaper — covers HELD and PENDING_PAYMENT (migration 010)
 - INV-4 — a capture on an expired hold refunds, never confirms
 - Retry driver for refunds
+- Cancellation + refund calculator, read through the booking's own policy version
+- `PATCH /venues/:id/policy` — policy is data, live with no deployment
+- `GET /reports/reconciliation` (INV-5) — zero discrepancies on the demo profile
+- `GET /rooms/:id/availability`
 - Soak under chaos (`node bench/soak.mjs`) — INV-3, INV-4, INV-5 with three replicas and nothing driven by hand
 - Seed script (`--profile=demo` and `--profile=full`)
 - Full-profile benchmark with k6 (p50/p95/p99, EXPLAIN before/after, machine spec)
@@ -39,9 +43,9 @@ A change that risks any of these must be stopped and flagged before code is writ
 - Policy versioning for refunds — every booking has a `policy_version_id`, nothing reads it
 
 ### Not built
-- Cancellation endpoint + refund calculator
-- Reconciliation report (INV-5)
-- Per-room availability endpoint
+- CI (`.github` does not exist)
+- Venue admin console, revenue and utilisation report (Tier 2)
+- Redeploy — the live instance predates the payment path
 
 ---
 

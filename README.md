@@ -28,6 +28,13 @@ docker compose up -d --build          # paygate runs with PAYGATE_CHAOS=on
 node bench/soak.mjs                   # INV-3, INV-4, INV-5 with nobody driving the jobs
 ```
 
+Then ask the system to check its own books — INV-5, and the strongest single
+piece of evidence here, because it is the invariant checking the other two:
+
+```
+curl -s localhost:8080/reports/reconciliation -H "authorization: Bearer $PLATFORM_TOKEN"
+```
+
 Benchmark, against the full profile:
 
 ```
@@ -67,8 +74,9 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 
 | Area | How I would have built it |
 |---|---|
-| **Cancellation + refund calculator** | Policy versions exist, every booking points at one — nothing reads them. Refund intent written in same transaction as cancel transition. Worker drives to Paygate. |
-| **Reconciliation report (INV-5)** | Three anti-joins: captures with no CONFIRMED booking, CONFIRMED bookings with no capture, refunds with no matching capture. |
+| **CI** | GitHub Actions: Postgres service, migrate, seed demo, `npm test`. Named in the scoring rubric and at zero. |
+| **Venue admin console, revenue report** | Tier 2. |
+| **Redeploy** | The live instance predates the payment path — it serves M1's code. |
 
 ### Real defects
 

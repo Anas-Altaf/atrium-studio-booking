@@ -65,6 +65,20 @@ export interface EquipmentLine {
   quantity: number;
 }
 
+/** A line item as stored — the rate is frozen at hold, not read back live. */
+export interface EquipmentLineItem {
+  equipment_type_id: string;
+  quantity: number;
+  hourly_rate_minor: number;
+}
+
+/** One band of a refund policy version. Ordered by hours_before descending. */
+export interface RefundTier {
+  hours_before: number;
+  room_pct: number;
+  equipment_pct: number;
+}
+
 export interface HoldRequest {
   roomId: string;
   startAt: string;

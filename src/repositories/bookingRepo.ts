@@ -1,7 +1,7 @@
 import { query } from '../db/pool.js';
 import type { Tx } from '../db/pool.js';
 import { type AuthScope, scopePredicate } from '../auth/scope.js';
-import type { BookingRow, EquipmentLine } from '../domain/types.js';
+import type { BookingRow, EquipmentLine, EquipmentLineItem } from '../domain/types.js';
 
 const COLUMNS = `id, venue_id, room_id, user_id, status, start_at, end_at,
                  expires_at, policy_version_id, total_minor`;
@@ -92,6 +92,16 @@ export async function transition(
     [id, from, to],
   );
   return (rowCount ?? 0) > 0;
+}
+
+/** Rates as frozen at hold, not as the equipment type charges today. */
+export async function lineItems(tx: Tx, bookingId: string): Promise<EquipmentLineItem[]> {
+  const { rows } = await tx.query<EquipmentLineItem>(
+    `SELECT equipment_type_id, quantity, hourly_rate_minor
+     FROM   booking_line_items WHERE booking_id = $1`,
+    [bookingId],
+  );
+  return rows;
 }
 
 /** INV-6: scoped in the predicate, so another venue's booking is not found rather than refused. */

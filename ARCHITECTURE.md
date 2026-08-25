@@ -338,6 +338,9 @@ Options considered but not applied are in [`LOAD_TEST.md`](./LOAD_TEST.md).
 | A9 | Which policy applies if tiers change between hold and confirmation? | `policy_version_id` captured at hold creation. Binding at confirmation could apply terms never shown to the customer |
 | A10 | Policy versions are immutable, so an admin mistake can't be fixed for bookings already made | Operations problem, not schema. The affected booking gets an explicit, audited adjustment — not a silent policy rewrite that would hide the correction from reconciliation |
 | A11 | Is cancelling an already-cancelled booking an illegal transition? | **No — 200 with the existing refund.** Asking for a state the booking is already in isn't a transition. 409 is reserved for genuinely impossible moves like CANCELLED → CONFIRMED |
+| A12 | §05 defines INV-5 as needing a reconciliation endpoint; §09 files the reconciliation report under Tier 2 | **The endpoint is Tier 1**, because the invariant's own wording asks for it and §05 says all six are tested against the deployed instance. The richer per-venue report with a date range stays Tier 2 |
+| A13 | INV-5 says a captured charge maps to a CONFIRMED booking or a refund. What about COMPLETED? | **Counted with CONFIRMED.** A COMPLETED booking is a confirmed one whose end time passed; the money is kept for the same reason. Reading it literally would flag every past booking as a discrepancy |
+| A14 | Which states does the reaper expire? | **HELD and PENDING_PAYMENT.** The matrix permits both, and INV-4 is specifically about a hold running out while the charge is in flight — that booking is in PENDING_PAYMENT |
 
 ---
 

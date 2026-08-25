@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import * as bookingService from '../services/bookingService.js';
+import * as cancellationService from '../services/cancellationService.js';
 
 const holdBody = z.object({
   roomId: z.string().uuid(),
@@ -28,5 +29,12 @@ export async function bookingRoutes(app: FastifyInstance): Promise<void> {
     '/bookings/:id',
     { onRequest: [app.authenticate] },
     async (req) => bookingService.findById(req.scope, req.params.id),
+  );
+
+  /** 200 either way: a repeat cancel is a replay, and returns the same refund. */
+  app.post<{ Params: { id: string } }>(
+    '/bookings/:id/cancel',
+    { onRequest: [app.authenticate] },
+    async (req) => cancellationService.cancel(req.scope, req.params.id),
   );
 }

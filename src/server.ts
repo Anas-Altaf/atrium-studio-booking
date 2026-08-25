@@ -12,6 +12,8 @@ import { authRoutes } from './routes/auth.js';
 import { bookingRoutes } from './routes/bookings.js';
 import { roomRoutes } from './routes/rooms.js';
 import { paymentRoutes } from './routes/payments.js';
+import { venueRoutes } from './routes/venues.js';
+import { reportRoutes } from './routes/reports.js';
 import { startWorker } from './worker/index.js';
 
 /** Bounded and printable. Anything else is replaced with a generated id. */
@@ -65,6 +67,8 @@ export async function build() {
   await app.register(bookingRoutes);
   await app.register(roomRoutes);
   await app.register(paymentRoutes);
+  await app.register(venueRoutes);
+  await app.register(reportRoutes);
 
   app.get('/health', async (_req, reply) => {
     const report = await healthService.check();

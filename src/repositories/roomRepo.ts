@@ -20,6 +20,44 @@ export async function findForBooking(
   return rows[0];
 }
 
+/** Outside a transaction, for reads that are not part of a hold. */
+export async function findVisible(
+  scope: AuthScope, roomId: string,
+): Promise<{ id: string; venue_id: string } | undefined> {
+  const pred = venuePredicate(scope, 'venue_id', 2);
+  const rows = await query<{ id: string; venue_id: string }>(
+    `SELECT id, venue_id FROM rooms WHERE id = $1 AND ${pred.sql}`,
+    [roomId, ...pred.params],
+  );
+  return rows[0];
+}
+
+export interface BusyInterval { start_at: Date; end_at: Date; status: string }
+
+/**
+ * What is taken on one room over a window.
+ *
+ * Reads the same partial GiST index the exclusion constraint uses, so
+ * "is this room free" and "may this booking be inserted" are the same question
+ * asked of the same structure. The range carries the 15 minute turnaround, so
+ * a caller deriving free slots gets the gap for nothing.
+ */
+export async function busyIntervals(
+  scope: AuthScope, roomId: string, from: string, to: string,
+): Promise<BusyInterval[]> {
+  const pred = venuePredicate(scope, 'b.venue_id', 4);
+  return query<BusyInterval>(
+    `SELECT b.start_at, b.end_at, b.status
+     FROM   bookings b
+     WHERE  b.room_id = $1
+       AND  b.status IN ('HELD','PENDING_PAYMENT','CONFIRMED')
+       AND  b.reserved_range && tstzrange($2, $3, '[)')
+       AND  ${pred.sql}
+     ORDER  BY b.start_at`,
+    [roomId, from, to, ...pred.params],
+  );
+}
+
 /**
  * Cross-venue search. The cheap predicates on `rooms` are written first and the
  * availability test last; measured on the full profile the planner does not run

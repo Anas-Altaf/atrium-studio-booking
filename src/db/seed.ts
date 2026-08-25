@@ -165,6 +165,7 @@ async function seedDatabase(profileName: ProfileName): Promise<void> {
     }
 
     await seedBookings(client, p, venueIds, roomsByVenue, customerIds, platformPolicy!.id);
+    await seedPayments(client);
 
     await client.query('COMMIT');
     await client.query('ANALYZE');
@@ -199,6 +200,25 @@ async function resetSchema(client: import('pg').PoolClient): Promise<void> {
   for (const [table, trigger] of TRUNCATE_GUARDS) {
     await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
   }
+}
+
+/**
+ * A confirmed booking has money behind it.
+ *
+ * Without this the dataset violates INV-5 on its own: the reconciliation
+ * endpoint reported 38,039 confirmed bookings with no captured charge on the
+ * demo profile, which is exactly what it is built to catch. CANCELLED and
+ * EXPIRED rows are left unpaid, which is coherent — they were never charged.
+ */
+async function seedPayments(client: import('pg').PoolClient): Promise<void> {
+  const { rowCount } = await client.query(
+    `INSERT INTO payments (booking_id, idempotency_key, amount_minor, currency, status, charge_id)
+     SELECT id, gen_random_uuid(), total_minor, 'PKR', 'CAPTURED',
+            'ch_seed_' || replace(id::text, '-', '')
+     FROM   bookings
+     WHERE  status IN ('CONFIRMED', 'COMPLETED')`,
+  );
+  process.stdout.write(`  ${rowCount ?? 0} payments\n`);
 }
 
 /**

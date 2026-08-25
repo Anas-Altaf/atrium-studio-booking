@@ -198,12 +198,12 @@ async function check(bookingIds) {
       `INV-4: ${capturedNoRefund.rows.length} unconfirmable booking(s) kept the money`);
   }
 
-  // INV-5: a captured charge maps to exactly one CONFIRMED booking or one refund.
+  // INV-5: a captured charge maps to a booking that happened, or to a refund.
   const stranded = await pool.query(
     `SELECT p.id FROM payments p
      JOIN bookings b ON b.id = p.booking_id
      WHERE p.booking_id = ANY($1::uuid[]) AND p.status = 'CAPTURED'
-       AND b.status <> 'CONFIRMED'
+       AND b.status NOT IN ('CONFIRMED','COMPLETED')
        AND NOT EXISTS (SELECT 1 FROM refunds r WHERE r.booking_id = p.booking_id)`, scope,
   );
   if (stranded.rows.length) {

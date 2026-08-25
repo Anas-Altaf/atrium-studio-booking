@@ -14,9 +14,23 @@ const searchQuery = z.object({
   limit: z.coerce.number().int().positive().max(100).default(50),
 });
 
+const window = z.object({
+  from: z.string().datetime({ offset: true }),
+  to: z.string().datetime({ offset: true }),
+});
+
 export async function roomRoutes(app: FastifyInstance): Promise<void> {
   app.get('/rooms', { onRequest: [app.authenticate] }, async (req) => {
     const criteria = searchQuery.parse(req.query);
     return roomService.search(req.scope, criteria);
   });
+
+  app.get<{ Params: { id: string } }>(
+    '/rooms/:id/availability',
+    { onRequest: [app.authenticate] },
+    async (req) => {
+      const { from, to } = window.parse(req.query);
+      return roomService.availability(req.scope, req.params.id, from, to);
+    },
+  );
 }
