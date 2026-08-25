@@ -11,6 +11,8 @@ import * as healthService from './services/healthService.js';
 import { authRoutes } from './routes/auth.js';
 import { bookingRoutes } from './routes/bookings.js';
 import { roomRoutes } from './routes/rooms.js';
+import { paymentRoutes } from './routes/payments.js';
+import { startWorker } from './worker/index.js';
 
 /** Bounded and printable. Anything else is replaced with a generated id. */
 const CORRELATION_ID = /^[A-Za-z0-9._:-]{8,128}$/;
@@ -21,32 +23,18 @@ export async function build() {
       level: process.env.LOG_LEVEL ?? 'info',
       base: { instance: config.instanceId },
     },
-    // Fastify reads a `request-id` header by default and, when it finds one,
-    // returns it verbatim without ever calling genReqId. Any caller could
-    // therefore choose our correlation id -- including choosing one already in
-    // use, which makes two unrelated requests indistinguishable in the logs.
-    // Turning the default off is what makes genReqId below authoritative; the
-    // one header we do accept is validated there.
+    // Fastify honours a `request-id` header and skips genReqId entirely, which
+    // would let a caller choose our correlation id.
     requestIdHeader: false,
-    // The correlation id is the request id, so it appears on every log line
-    // this request produces without threading it through by hand.
+    // The correlation id is the request id, so every log line carries it.
     genReqId: (req) => {
       const h = req.headers['x-correlation-id'];
-      // An inbound id is echoed back in a response header and written to every
-      // log line, so it is accepted only in a bounded, printable form. A value
-      // carrying a newline would either forge a log record or make Node throw
-      // on the response header, which would surface as a 500 on a request that
-      // was otherwise fine.
       return typeof h === 'string' && CORRELATION_ID.test(h) ? h : randomUUID();
     },
   });
 
-  // Before every register() call, not after. A plugin registered with
-  // app.register() gets its own encapsulation context and captures the error
-  // handler in force at that moment, so a handler set afterwards never reaches
-  // any route. Deploying found this: a Zod failure came back as a 500 carrying
-  // the raw validation detail instead of a 400. Same encapsulation trap as the
-  // auth decorator in AI_LOG 14.
+  // Before every register(), not after: a plugin captures the error handler in
+  // force when its context is created, so one set afterwards reaches no route.
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof AppError) {
       return reply.code(err.statusCode).send({
@@ -62,11 +50,8 @@ export async function build() {
     return reply.code(500).send({ error: 'INTERNAL', correlationId: req.id });
   });
 
-  // Before the routes, so the preflight is answered for every one of them. The
-  // frontend is on a different origin, so without this every browser call fails
-  // while curl succeeds -- the failure mode that looks like a broken API.
-  // Bearer tokens, not cookies, so credentials stays off and no origin is
-  // trusted with the session.
+  // Before the routes, so the preflight is answered for all of them. Bearer
+  // tokens rather than cookies, so credentials stays off.
   await app.register(cors, {
     origin: config.corsOrigins.length ? config.corsOrigins : false,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -79,6 +64,7 @@ export async function build() {
   await app.register(authRoutes);
   await app.register(bookingRoutes);
   await app.register(roomRoutes);
+  await app.register(paymentRoutes);
 
   app.get('/health', async (_req, reply) => {
     const report = await healthService.check();
@@ -94,6 +80,15 @@ if (isEntry) {
   const app = await build();
   try {
     if (process.env.RUN_MIGRATIONS !== 'false') await migrate();
+
+    // Only when this file is the entry point: `build()` is also what the tests
+    // call, and a loop polling underneath them would apply the very events a
+    // test is about to assert are unapplied.
+    if (config.workerEnabled) {
+      const worker = startWorker(app.log);
+      app.addHook('onClose', async () => { worker.stop(); });
+    }
+
     await app.listen({ port: config.port, host: config.host });
   } catch (err) {
     app.log.error(err);

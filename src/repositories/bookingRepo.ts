@@ -1,15 +1,10 @@
-/**
- * Booking writes and reads. SQL only.
- *
- * The hold's business rules — interval validation, pricing, capacity, the venue
- * check — used to live here alongside the queries. They are now in
- * `domain/booking.ts` and `services/bookingService.ts`; what is left is the
- * persistence.
- */
 import { query } from '../db/pool.js';
 import type { Tx } from '../db/pool.js';
 import { type AuthScope, scopePredicate } from '../auth/scope.js';
 import type { BookingRow, EquipmentLine } from '../domain/types.js';
+
+const COLUMNS = `id, venue_id, room_id, user_id, status, start_at, end_at,
+                 expires_at, policy_version_id, total_minor`;
 
 export interface NewHold {
   venueId: string;
@@ -23,10 +18,9 @@ export interface NewHold {
 }
 
 /**
- * INV-1 is settled by this statement. There is no prior SELECT for conflicts,
- * because the check and the write are the same operation: the exclusion
- * constraint rejects an overlap with 23P01, which `translatePgError` turns into
- * a 409. A read-then-write would leave a window between them.
+ * INV-1 is settled by this statement. There is no prior SELECT for conflicts:
+ * the exclusion constraint makes the check and the write one operation, and
+ * rejects an overlap with 23P01.
  */
 export async function insertHold(tx: Tx, hold: NewHold): Promise<BookingRow> {
   const { rows } = await tx.query<BookingRow>(
@@ -34,8 +28,7 @@ export async function insertHold(tx: Tx, hold: NewHold): Promise<BookingRow> {
        (venue_id, room_id, user_id, status, start_at, end_at,
         expires_at, policy_version_id, total_minor)
      VALUES ($1, $2, $3, 'HELD', $4, $5, $6, $7, $8)
-     RETURNING id, venue_id, room_id, user_id, status,
-               start_at, end_at, expires_at, policy_version_id, total_minor`,
+     RETURNING ${COLUMNS}`,
     [hold.venueId, hold.roomId, hold.userId, hold.startAt, hold.endAt,
      hold.expiresAt, hold.policyVersionId, hold.totalMinor],
   );
@@ -53,13 +46,35 @@ export async function insertLineItem(
   );
 }
 
+/** No AuthScope: both callers reach it having already established who may act. */
+export async function lockById(tx: Tx, id: string): Promise<BookingRow | undefined> {
+  const { rows } = await tx.query<BookingRow>(
+    `SELECT ${COLUMNS} FROM bookings WHERE id = $1 FOR UPDATE`,
+    [id],
+  );
+  return rows[0];
+}
+
 /**
- * A booking by id, visible only within the caller's scope (INV-6).
+ * The only way a booking's status changes. No validation here: the BEFORE
+ * UPDATE trigger checks the pair against `booking_transitions` and writes the
+ * AuditEvent in the same statement.
  *
- * The scope is applied in the predicate rather than checked after the read, so
- * a booking belonging to another venue is not found rather than found and then
- * refused.
+ * `WHERE status = $2` makes an already-applied transition a no-op instead of an
+ * error, which is what a redelivered webhook produces. The row count separates
+ * the two.
  */
+export async function transition(
+  tx: Tx, id: string, from: string, to: string,
+): Promise<boolean> {
+  const { rowCount } = await tx.query(
+    `UPDATE bookings SET status = $3 WHERE id = $1 AND status = $2`,
+    [id, from, to],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/** INV-6: scoped in the predicate, so another venue's booking is not found rather than refused. */
 export async function findById(scope: AuthScope, id: string): Promise<BookingRow | undefined> {
   const pred = scopePredicate(scope, { venue: 'b.venue_id', user: 'b.user_id' }, 2);
   const rows = await query<BookingRow>(
