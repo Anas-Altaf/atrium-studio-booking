@@ -244,6 +244,15 @@ describe('policy is data', () => {
     expect(rows[0]!.id).toBe(res.body.policyVersionId);
   });
 
+  /** The brief: venue staff manage bookings but cannot change pricing or policy. */
+  it('refuses venue staff, who belong to a venue but may not change its policy', async () => {
+    const res = await call('PATCH', `/venues/${venueId}/policy`, {
+      tiers: [{ hours_before: 0, room_pct: 100, equipment_pct: 100 }],
+    }, await login('staff@atrium.test'));
+
+    expect(res.status).toBe(403);
+  });
+
   it('refuses an admin from another venue', async () => {
     const res = await call('PATCH', `/venues/${venueId}/policy`, {
       tiers: [{ hours_before: 0, room_pct: 100, equipment_pct: 100 }],

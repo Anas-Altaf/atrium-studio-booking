@@ -7,7 +7,7 @@
  * refund calculator reads through that (4B).
  */
 import { withTransaction } from '../db/pool.js';
-import { type AuthScope, isPlatformAdmin } from '../auth/scope.js';
+import { type AuthScope, isPlatformAdmin, isVenueAdmin } from '../auth/scope.js';
 import { forbidden } from '../errors.js';
 import type { RefundTier } from '../domain/types.js';
 import * as venueRepo from '../repositories/venueRepo.js';
@@ -21,10 +21,18 @@ export interface PublishedPolicy {
 export async function publishPolicy(
   scope: AuthScope, venueId: string, tiers: RefundTier[],
 ): Promise<PublishedPolicy> {
-  // 403 rather than 404 here: an admin knows their own venue exists, so there
-  // is nothing to conceal, and a 404 would read as a broken deployment.
-  if (!isPlatformAdmin(scope) && scope.venueId !== venueId) {
-    throw forbidden('a venue admin may only publish policy for their own venue');
+  // Two separate questions. Staff belong to a venue but may not change its
+  // pricing or policy, so membership alone is not authorisation to write.
+  //
+  // 403 rather than 404: an admin knows their own venue exists, so there is
+  // nothing to conceal, and a 404 would read as a broken deployment.
+  if (!isPlatformAdmin(scope)) {
+    if (!isVenueAdmin(scope)) {
+      throw forbidden('only a venue admin or platform admin may publish policy');
+    }
+    if (scope.venueId !== venueId) {
+      throw forbidden('a venue admin may only publish policy for their own venue');
+    }
   }
 
   // Highest threshold first, so a caller cannot change the outcome by
