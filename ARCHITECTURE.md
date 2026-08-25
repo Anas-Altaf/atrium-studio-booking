@@ -203,9 +203,13 @@ A background reaper transitions HELD rows past `expires_at` to EXPIRED on ~15s i
 
 UPDATE and DELETE are revoked on `audit_events`. Except: the app connects as the database owner (both in docker compose and on free hosting), and an owner can't be revoked from its own tables. Migration 008 adds triggers that reject the mutation from any role. Both are kept — the privilege is the right mechanism for production, the trigger is the one actually fastened here.
 
-Row-level triggers have their own hole: `TRUNCATE` removes rows without producing row events, so `BEFORE UPDATE OR DELETE ... FOR EACH ROW` never fires for it and the entire trail was removable in one statement. Migration 009 adds statement-level `BEFORE TRUNCATE` guards. A cascaded truncate fires the trigger on the cascaded table too, so `TRUNCATE bookings CASCADE` is refused for the same reason as `TRUNCATE audit_events` — which matters, because the cascade is the path a caller would actually take.
+Migration 009 closes the remaining hole:
 
-The seed genuinely does need to reset those tables, and it disables the guards explicitly rather than being exempted from them. `ALTER TABLE ... DISABLE TRIGGER` requires ownership, which `atrium_app` does not have under 006, so seeding is a migrator-role operation by construction. DDL is transactional in Postgres: a seed that fails midway brings the guards back with the rollback.
+- `TRUNCATE` produces no row events, so the 008 row triggers never fired for it. The trail was removable in one statement.
+- Statement-level `BEFORE TRUNCATE` guards on `audit_events`, `refund_policy_versions`, `booking_transitions`.
+- A cascaded truncate fires the guard on the cascaded table, so `TRUNCATE bookings CASCADE` is refused too.
+- The seed resets these tables by disabling the guards explicitly. `ALTER TABLE ... DISABLE TRIGGER` requires ownership, which `atrium_app` does not hold under 006. DDL is transactional, so a failed seed restores them on rollback.
+- `tests/append-only.test.ts` — 8 cases, including the cascade path.
 
 ---
 
@@ -285,21 +289,27 @@ WHERE  r.city = $1
   );
 ```
 
-Availability is written last on purpose — it's the only predicate on the large table (250k bookings vs 800 rooms on full profile), and the intent was that every room eliminated by a cheaper filter first is a range lookup not performed.
+Availability is written last on purpose — it's the only predicate on the large table (250k bookings vs 800 rooms on full profile). The intent was that every room eliminated by a cheaper filter first is a range lookup not performed.
 
-**The planner does not do that**, and the full-profile measurement is what showed it. It leads with the range scan, reads every active booking in the window across all 40 venues, and hash-anti-joins that against the surviving rooms. Writing a predicate last does not make it run last. See §5 measurements below.
+Measured on the full profile, the planner does not execute it in that order. It leads with the range scan, reads every active booking in the window across all 40 venues, and hash-anti-joins that result against the surviving rooms. Plan below.
 
 **Correction from the pre-code draft:** I first proposed `(city, capacity, hourly_rate_minor)` as a composite index. The third column is wasted — `capacity >=` and `price <=` are both ranges, so the btree stops seeking after the first range predicate. Shipped as `(city, capacity)` with price filtered on the reduced set.
 
-**Measurements:** full profile, 250,000 bookings, three replicas. All three built endpoints meet their targets — availability p95 230 ms against 300, search 56 ms against 500, hold 172 ms against 250. Plans, numbers and machine spec in [`LOAD_TEST.md`](./LOAD_TEST.md).
+**Measurements:** full profile, 250,000 bookings, three replicas behind nginx. Plans, numbers and machine spec in [`LOAD_TEST.md`](./LOAD_TEST.md).
 
-What the plans say about the indexes:
+| Endpoint | Target p95 | Measured p95 |
+|---|---|---|
+| Availability window, 7 day range | < 300 ms | 230.1 ms |
+| Cross-venue search, combined filters | < 500 ms | 55.6 ms |
+| Create hold | < 250 ms | 172.2 ms |
 
-- `rooms_search_idx` earns nothing at this size. It turns a seq scan of 800 rooms into a bitmap index scan, but 800 rooms is 18 heap pages — the scan it replaced was already free. Dropping it changes execution time from 18.76 ms to 18.88 ms.
-- 17 of those 18 ms are the availability anti-join, in both plans. `no_room_overlap` is keyed `(room_id, reserved_range)`; with a 7 day window and no room to anchor on, the city filter never reaches the index.
-- The planner estimates 417 rows from that scan and gets 2,137. GiST selectivity on `&&` over `tstzrange` is a 5x under-estimate, which is what chose a hash anti-join over a per-room probe.
+What the plans show:
 
-The fix is to make the room set lead — a materialised CTE of candidate rooms, or a tenant dimension on the GiST index — not to tune `rooms_search_idx`. Not needed for the targets today; it is the first thing that breaks as the window widens, so it belongs with §7.
+- With `rooms_search_idx`: 18.76 ms. With it dropped: 18.88 ms. The index turns a seq scan of 800 rooms into a bitmap index scan reading 2 buffers; the rooms table is 18 heap pages.
+- 17 of those 18 ms are the availability anti-join, identical in both plans. `no_room_overlap` is keyed `(room_id, reserved_range)`; with a 7 day window and no room to anchor on, it scans 2,137 rows across 433 buffers before the city filter applies.
+- Planner estimates 417 rows from that scan, actual 2,137 — a 5x under-estimate on GiST `&&` selectivity over `tstzrange`, which is what selected a hash anti-join over a per-room probe.
+
+Options considered but not applied are in [`LOAD_TEST.md`](./LOAD_TEST.md).
 
 ---
 

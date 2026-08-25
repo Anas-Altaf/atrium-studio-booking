@@ -71,7 +71,7 @@
 **Trade-off:** Hold transaction may run more than once — safe because the victim is fully rolled back.
 ---
 
-### 11. Append-only enforced in layers, and the seed disables it in the open
-**Chose:** Privilege (006) + row triggers (008) + statement-level TRUNCATE guards (009). The seed calls `ALTER TABLE ... DISABLE TRIGGER`, which requires ownership.
-**Rejected:** A session flag (`SET LOCAL atrium.allow_truncate`) the guard consults — an escape hatch any code path can open turns the guard back into a convention.
-**Trade-off:** The seed can no longer run as the application role. That is the point: seeding is a migrator-role operation, and now the database says so rather than the README.
+### 11. Append-only in three layers; the seed disables the guard explicitly
+**Chose:** Privilege (006) + row triggers (008) + statement-level TRUNCATE guards (009). Seed calls `ALTER TABLE ... DISABLE TRIGGER`, which requires table ownership.
+**Rejected:** A session flag (`SET LOCAL atrium.allow_truncate`) the guard consults. Any code path can set it.
+**Trade-off:** The seed can no longer run as the application role — it needs the migrator role.

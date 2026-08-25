@@ -64,24 +64,24 @@ Replaced plain HTML with Next.js. App Router, TypeScript, Tailwind. Demo surface
 ### Later — Frontend deployed
 Frontend deployed to Vercel at https://atrium-studio-booking.vercel.app.
 
-### Aug 25 — Two recorded defects closed before restarting Tier 1
-Both were listed in the README rather than fixed, and both were cheap.
+### Aug 25 — Two recorded defects closed
+Both were in README Known Issues rather than fixed.
 
-`TRUNCATE` walked past the append-only triggers: row-level triggers see no row events on a truncate, so the audit trail was removable in one statement — and reachable by cascade from `bookings`, which is the path anyone would actually take. Migration 009 adds statement-level guards. The seed disables them explicitly, which requires table ownership the app role does not hold.
+`TRUNCATE` produces no row events, so the 008 row triggers never fired for it and the audit trail was removable in one statement, cascade from `bookings` included. Migration 009 adds statement-level guards; the seed disables them explicitly, which requires ownership the app role does not hold.
 
-Fastify's default `requestIdHeader` honoured an inbound `request-id` and skipped `genReqId` entirely, so a caller could pick our correlation id. `requestIdHeader: false`. The one header still accepted, `x-correlation-id`, is now bounded — an unvalidated value goes into a response header and every log line, and one carrying a newline would have forged a log record or thrown on the header.
+Fastify's default `requestIdHeader` honoured an inbound `request-id` and skipped `genReqId`. Set to `false`. `x-correlation-id` is still accepted, now bounded to `^[A-Za-z0-9._:-]{8,128}$`.
 
-`tests/append-only.test.ts` and `tests/correlation-id.test.ts` cover both. Suite 24 green.
+`tests/append-only.test.ts`, `tests/correlation-id.test.ts`. Suite 24 green.
 
-### Aug 25 — Seed volumes, and the dataset defect underneath them
-The demo profile was seeding 24,675 bookings and 64 rooms against a brief that says 25,000 and 60. Two causes: rooms and equipment were expressed per venue and multiplied, so totals that don't divide evenly came out wrong; and the count came from rows generated rather than rows accepted, with the insert on `ON CONFLICT DO NOTHING`.
+### Aug 25 — Seed volumes and date distribution
+Demo was seeding 24,675 bookings and 64 rooms against a stated 25,000 and 60. Causes: per-venue counts multiplied up, and rows counted as written when `ON CONFLICT DO NOTHING` had dropped them.
 
-Fixing the count exposed the real defect. The generator walked the calendar from the start of the window and stopped at the target, so all 250,000 full-profile bookings landed 13 to 18 months in the past — none in the present or future. The volume was right and the dataset was fiction: every availability query met an empty calendar. Skip rate is now derived from target over capacity so a pass spreads across the whole window, and status follows the date. 47,671 future bookings, 38,006 of them in the exclusion index.
+Underneath that: the generator walked the calendar from the start of the window and stopped at the target, so all 250,000 full-profile bookings sat 13 to 18 months in the past, none in the present or future. Skip rate now derives from target over calendar capacity; status follows the date. Full profile now 47,671 future bookings, 38,006 in the exclusion index.
 
 ### Aug 25 — Benchmark
-k6 as a compose service, targets as thresholds. All three built endpoints pass: availability 230 ms p95 against 300, search 56 against 500, hold 172 against 250. Revenue report is Tier 2 and unbuilt, so it is not measured.
+k6 as a compose service, brief's targets as thresholds. Availability 230.1 ms p95 against 300, search 55.6 against 500, hold 172.2 against 250. Zero errors. Revenue report is Tier 2 and unbuilt — not measured.
 
-EXPLAIN says `rooms_search_idx` earns nothing at 800 rooms — 18.88 ms to 18.76 ms — and 17 of those 18 ms are the availability anti-join, which reads every active booking in the window across all venues before the city filter applies. Wrote it up rather than tuning it; the targets are met and the fix belongs with §7.
+EXPLAIN, warm on both sides: `rooms_search_idx` present 18.76 ms, dropped 18.88 ms. 17 of those 18 ms are the availability anti-join. Recorded, not tuned.
 
 **Cut:** a hand-rolled load driver, written and deleted before it ran. The brief names k6.
 

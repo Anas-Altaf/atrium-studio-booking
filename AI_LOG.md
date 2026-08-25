@@ -205,3 +205,30 @@ Presenting query plans from a 64-room database as a load test dresses up work th
 Three errors: response logger lost type info (`ApiResult<unknown>`), React components without importing React (modern JSX transform doesn't provide it), `init.headers` spread into HeadersInit (union type doesn't spread safely).
 
 Design point worth keeping: page reports how many distinct venues a search returns. Cheapest INV-6 demonstration — customer sees eight, admin sees one, produced by the API.
+
+---
+
+### 22. TRUNCATE guard and the correlation id
+**Delegated:** Close two holes already in README Known Issues — TRUNCATE walking past the append-only triggers, and Fastify's `request-id` overriding `genReqId`.
+**Returned:** Migration 009 with statement-level guards, `requestIdHeader: false`, plus validation on `x-correlation-id` that was not asked for.
+**Verdict:** MODIFIED — the validation was unrequested scope.
+
+Rejected its first instinct on the seed: a session flag the guard consults is an escape hatch any code path can open. `DISABLE TRIGGER` needs ownership instead.
+
+---
+
+### 23. Seed volumes
+**Delegated:** Make the seed produce the volumes the brief states. Demo was at 24,675 bookings and 64 rooms against a stated 25,000 and 60.
+**Returned:** Totals spread across venues, count taken from `rowCount`. Then a rewrite of the date distribution, unasked.
+**Verdict:** MODIFIED.
+
+Two count bugs: per-venue figures multiplied up, and rows counted as written when `ON CONFLICT DO NOTHING` had dropped them. Underneath: all 250,000 full-profile bookings sat 13 to 18 months in the past, so every availability query met an empty calendar. New defect — should have been raised, not fixed in the same pass.
+
+---
+
+### 24. Full-profile benchmark
+**Delegated:** Benchmark `--profile=full` and produce LOAD_TEST.md.
+**Returned:** A hand-rolled Node load driver; then k6 as a compose service after that was rejected.
+**Verdict:** MODIFIED.
+
+The driver was argued on autocannon lacking p95, which is true, and on k6 needing a binary install, which is not — it ships a Docker image, and the brief names k6. Three further errors: 409s counted as failed requests, hold latency averaged over 201s and 409s, and a first EXPLAIN pass that compared a cold plan against a warm one.

@@ -11,10 +11,9 @@ npm run bench                       # docker compose --profile bench run --rm k6
 npm run explain                     # EXPLAIN ANALYZE, before and after the 007 indexes
 ```
 
-k6 runs as a compose service on the same network as the load balancer, so there
-is nothing to install beyond Docker, which this repo already requires. The
-brief's four targets are k6 thresholds, not a table to eyeball: a miss exits
-non-zero.
+k6 runs as a compose service on the same network as the load balancer. Nothing
+to install beyond Docker. The brief's targets are declared as k6 thresholds, so
+a missed target exits non-zero.
 
 Seed first, then benchmark. The hold phase writes real bookings, so a second run
 over the same data meets its own rows. `HOLD_OFFSET=4000` moves it to a fresh
@@ -33,14 +32,11 @@ part of the slot pool if a reseed is not wanted.
 
 Holds attempted 4,000 · placed 2,679 · 409 conflicts 1,321 · anything else 0.
 
-Two things about that hold row. The 409s are the seeded calendar and the
-previous run's own bookings holding the slot — correct behaviour, so they are
-not counted as errors. And the p95 is measured over holds that were **placed**:
-a rejected hold leaves before most of the work happens, so averaging the two
-together produces a number that improves as the system does less.
+How the hold row is measured:
 
-Availability is the one with headroom to spare rather than to burn — p99 is
-353 ms against a 300 ms p95 target. The EXPLAIN below says why.
+- 409s are the seeded calendar and the previous run's own bookings holding the slot. `http.setResponseCallback` treats 200-299 and 409 as expected, so they are not counted in the error rate.
+- The p95 is over holds that were **placed** (`hold_created_duration`), not over all hold requests. A rejected hold returns before most of the work happens.
+- Availability p99 is 353.3 ms; the target is on p95.
 
 ### Not measured
 
@@ -60,20 +56,19 @@ Availability is the one with headroom to spare rather than to burn — p99 is
 | Node | v22.17.1 |
 | Load balancer | nginx:alpine, three API replicas |
 
-Postgres is on default memory settings. That matters for reading the plans
-below: 128 MB of shared buffers is holding a 250,000 row table plus its indexes.
+Postgres is on default memory settings: 128 MB of shared buffers holding a
+250,000 row table plus its indexes.
 
 ## EXPLAIN: before and after the indexing work
 
-"Before" means before migration 007. It does **not** mean before the GiST
-exclusion index on `bookings` — that index backs the `no_room_overlap`
-constraint from 003, which is INV-1 itself. Removing it to produce a slower plan
-would be measuring a system that double-books.
+"Before" means before migration 007. It does not mean before the GiST exclusion
+index on `bookings` — that index backs the `no_room_overlap` constraint from
+003, which is INV-1 itself, so it is present in both plans.
 
-Both plans are run warm. The first attempt at this reported the indexed query as
-*slower* than the unindexed one, purely because it ran first and paid for the
-disk reads; `bench/explain.sql` now runs each query once with output discarded
-before measuring it.
+Both plans are run warm. The first attempt reported the indexed query as slower
+than the unindexed one because it ran first and paid for the disk reads;
+`bench/explain.sql` now runs each query once with output discarded before
+measuring.
 
 ### After — with `rooms_search_idx` and `rooms_amenities_idx`
 
@@ -129,36 +124,27 @@ before measuring it.
 
 ### What changed
 
-Almost nothing, and that is the finding. 18.88 ms to 18.76 ms. The index does
-what it was built to do — a seq scan of 800 rooms becomes a bitmap index scan
-reading 2 buffers — but 800 rooms is 18 heap pages, so the scan it replaced was
-already free.
+Execution time 18.88 ms → 18.76 ms.
 
-**17 of those 18 ms are the availability anti-join**, and both plans pay it
-identically. `no_room_overlap` is keyed `(room_id, reserved_range)`, but with a
-7 day window and no room to anchor on, the planner reads every active booking in
-that window across all 40 venues — 2,137 rows, 433 buffers — and only then
-hash-joins the result against the 55 rooms that survived the city filter. The
-city filter never reaches the index.
+| | Before | After |
+|---|---|---|
+| Room access | Seq Scan, 800 rows scanned, 745 filtered, 18 buffers | Bitmap Index Scan on `rooms_search_idx`, 231 rows, 2 buffers, then heap 18 buffers |
+| Availability anti-join | Index Only Scan on `no_room_overlap`, 2,137 rows, 433 buffers, 17.07 ms | same index, 2,137 rows, 433 buffers, 16.34 ms |
+| Join | Hash Right Anti Join | Hash Right Anti Join |
 
-Also worth noting: the planner estimates 417 rows and gets 2,137. GiST
-selectivity estimation on `&&` over `tstzrange` is a 5x under-estimate here,
-which is what pushed it to a hash anti-join rather than a per-room probe.
+The room access changed and the cost did not: both plans spend 17 of 18 ms in
+the availability anti-join, which reads every active booking in the window across
+all 40 venues before the city filter applies.
 
-### What I would do next
+Planner estimate for that scan is 417 rows, actual 2,137 — a 5x under-estimate
+on GiST `&&` selectivity over `tstzrange`.
 
-1. Force the room set to lead. Materialise the candidate rooms in a CTE and
-   probe `no_room_overlap` per room. 55 index probes against a 2,137 row scan.
-2. Give the index a tenant dimension — GiST on `(venue_id, reserved_range)`, or
-   `city` denormalised onto `bookings` the way it already is onto `rooms`. Then
-   a city-filtered search stops reading other cities' bookings.
-3. Only then revisit `rooms_search_idx`. It is not paying for itself at 800
-   rooms, but it is not costing anything either, and it is the right index at
-   the room count where the anti-join has been fixed.
+### Options not applied
 
-None of this is needed to hit the targets today. It is what breaks first when
-the window widens or the venue count grows, and it belongs with the 100x
-analysis in ARCHITECTURE.md §7 rather than in a tuning pass now.
+- Materialise candidate rooms in a CTE so the room set leads: 55 index probes instead of a 2,137 row scan.
+- Tenant dimension on the GiST index — `(venue_id, reserved_range)`, or `city` denormalised onto `bookings`.
+
+All three targets are met without them. Related: ARCHITECTURE.md §7.
 
 ## Files
 

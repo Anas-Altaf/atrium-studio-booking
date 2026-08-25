@@ -61,7 +61,7 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 
 ### Real defects
 
-- **Append-only took three migrations to actually hold.** 006 revokes UPDATE and DELETE from `atrium_app`, which is the right production mechanism and protects nothing here — the app connects as owner and an owner can't be revoked from its own tables. 008 adds row triggers that reject the mutation from any role. `TRUNCATE` produces no row events and walked past both, so 009 adds statement-level `BEFORE TRUNCATE` guards, including on the cascade path from `bookings`. The seed disables them explicitly, which requires ownership. All three kept; `tests/append-only.test.ts` covers it.
+- **Append-only took three migrations.** 006 revokes UPDATE/DELETE from `atrium_app`; the app connects as owner, and an owner can't be revoked from its own tables. 008 adds row triggers. `TRUNCATE` produces no row events and passed both, so 009 adds statement-level guards including the cascade path from `bookings`. All three kept. `tests/append-only.test.ts`.
 - **Audit actor read from session variable.** Same mechanism rejected for RLS in §4A. Set with `SET LOCAL` so it can't outlive the transaction — a leak here puts wrong actor on audit row (data quality), not wrong data in the response (isolation).
 - **DST pricing edge.** Bookings are priced on wall-clock hours. Affects a booking spanning a DST transition. Timestamps are `timestamptz` throughout.
 - **Render free tier sleeps** after 15 min idle. First request after that has a 30-60s cold start. Background work stops while asleep.
