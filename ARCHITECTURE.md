@@ -381,8 +381,12 @@ Nested Loop Left Join
 ## 8. What I would do with two more weeks
 
 1. **CI.** (Tier 2, not built)
-2. **Live availability heatmap with WebSocket.** (Tier 3)
-3. **Natural language booking.** (Tier 3)
-4. **Recurring bookings.** (Tier 3)
-5. **Waitlist with automatic promotion.** (Tier 3)
-6. **Email or in-app notifications.** (Tier 3)
+2. **Fix the equipment join order** (§7 measured it). The peak check scans 12k rows per hold. Driving from `booking_line_items` instead of `bookings` would cut that to a handful.
+3. **Row-level security.** With `SET LOCAL` proven safe by the audit trigger, the pooling objection is answerable. Would put INV-6 in the DB beside INV-1 and INV-2.
+4. **Redeploy.** The live instance predates the console API and payment path.
+5. **Organise the test suite.** Some areas have more coverage than they need while others are thin. Consolidate, remove duplication.
+6. **Live availability heatmap with WebSocket.** (Tier 3)
+7. **Natural language booking.** (Tier 3)
+8. **Recurring bookings.** (Tier 3)
+9. **Waitlist with automatic promotion.** (Tier 3)
+10. **Email or in-app notifications.** (Tier 3)
