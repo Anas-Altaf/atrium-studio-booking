@@ -50,6 +50,10 @@ services:
       # deliveries against this secret. Both must match the paygate service.
       PAYGATE_URL: http://paygate:4000
       PAYGATE_SECRET: paygate-dev-secret
+      # CORS fails closed, so the frontend's dev origin has to be named. Without
+      # this every request from `npm run dev` in web/ is blocked by the browser
+      # before it reaches a route.
+      CORS_ORIGINS: http://localhost:3000
       INSTANCE_ID: api-1
       PORT: "3000"
     depends_on:
