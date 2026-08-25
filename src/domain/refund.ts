@@ -12,14 +12,8 @@ export interface RefundBreakdown {
 const HOUR_MS = 3_600_000;
 
 /**
- * The tier in force, by hours between now and the booking's start.
- *
- * Tiers are read from the highest threshold down, so the platform default
- * (48 → 100/100, 24 → 50/100, 2 → 0/100, 0 → 0/0) resolves the brief's table
- * exactly: 30 hours out falls past 48 and lands on 24.
- *
- * A cancellation after the start refunds nothing — no tier has a negative
- * threshold, so nothing matches.
+ * Read from the highest threshold down, so 30 hours out falls past 48 and lands
+ * on 24. After the start nothing matches, and nothing is refunded.
  */
 export function tierFor(
   tiers: RefundTier[], startAt: string | Date, now: number = Date.now(),
@@ -47,20 +41,14 @@ export function calculateRefund(
   return { roomMinor: room, equipmentMinor: equipment, totalMinor: room + equipment, tier };
 }
 
-/**
- * What the equipment on a booking cost, from the rates frozen onto its line
- * items rather than from the equipment type's rate today.
- */
+/** From the rates frozen onto the line items, not the type's rate today. */
 export function equipmentPortion(lines: EquipmentLineItem[], hours: number): number {
   return lines.reduce((sum, l) => sum + l.quantity * l.hourly_rate_minor * hours, 0);
 }
 
 /**
- * Room and equipment from the one total the booking stores.
- *
- * Derived by subtraction, not by recomputing the room rate: `priceOf` rounds
- * the sum, so recomputing both halves independently can miss the total by a
- * minor unit and refund money the booking never charged.
+ * By subtraction, not by recomputing the room rate: `priceOf` rounds the sum,
+ * so recomputing both halves can miss the total by a minor unit.
  */
 export function splitTotal(totalMinor: number, equipmentMinor: number): {
   roomMinor: number; equipmentMinor: number;

@@ -8,24 +8,18 @@ export interface Discrepancy {
 }
 
 /**
- * INV-5, as three anti-joins and one open question.
- *
- * Each query names money that exists in one place and not in the other it
- * should match. Zero rows across all four is the invariant holding.
- *
- * Scoped like every other read: a venue admin reconciles their own venue, a
- * platform admin everything.
+ * INV-5, as three anti-joins and one open question. Each names money present in
+ * one place and absent from the other it should match; zero rows across all
+ * four is the invariant holding.
  */
 export async function discrepancies(scope: AuthScope): Promise<Discrepancy[]> {
   const pred = venuePredicate(scope, 'b.venue_id', 1);
   const params = pred.params;
 
-  // INV-5 names CONFIRMED. COMPLETED is counted with it: a completed booking
-  // is a confirmed one whose end time has passed, and the money is kept for the
-  // same reason. Recorded in ARCHITECTURE 6.
+  // COMPLETED counts with CONFIRMED: it is a confirmed booking whose end time
+  // passed, and the money is kept for the same reason (A13).
 
-  // 1. A captured charge against a booking that neither happened nor was
-  //    refunded. This is money taken for nothing.
+  // 1. Money taken for a booking that neither happened nor was refunded.
   const stranded = await query<Discrepancy>(
     `SELECT 'CAPTURE_WITHOUT_OUTCOME' AS kind, p.id::text AS id,
             'booking ' || b.id || ' is ' || b.status AS detail
@@ -38,8 +32,7 @@ export async function discrepancies(scope: AuthScope): Promise<Discrepancy[]> {
     params,
   );
 
-  // 2. A booking that happened with no captured charge behind it. This is a
-  //    slot given away.
+  // 2. A slot given away: a booking that happened with no captured charge.
   const unpaid = await query<Discrepancy>(
     `SELECT 'CONFIRMED_WITHOUT_CAPTURE' AS kind, b.id::text AS id,
             b.status || ' with no captured payment' AS detail
@@ -63,9 +56,8 @@ export async function discrepancies(scope: AuthScope): Promise<Discrepancy[]> {
     params,
   );
 
-  // 4. A callback naming a charge this system never recorded, still unresolved.
-  //    Not scoped: an unmatched webhook has no venue until it is matched, so
-  //    only a platform admin is shown them.
+  // 4. A callback naming a charge never recorded. Unmatched means no venue yet,
+  //    so only a platform admin is shown them.
   const unmatched = scope.role === 'PLATFORM_ADMIN'
     ? await query<Discrepancy>(
       `SELECT 'UNMATCHED_CALLBACK' AS kind, u.id::text AS id,

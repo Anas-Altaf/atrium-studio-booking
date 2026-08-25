@@ -13,11 +13,9 @@ export interface Availability {
 }
 
 /**
- * What a room has taken over a window, and the hours it is open.
- *
  * Busy intervals rather than free ones: free depends on how long the caller
- * wants and where they are willing to start, and the turnaround is already in
- * the range. Returning what is taken keeps this one index scan.
+ * wants and where they will start, and the turnaround is already in the range.
+ * Returning what is taken keeps this one index scan.
  */
 export async function availability(
   scope: AuthScope, roomId: string, from: string, to: string,

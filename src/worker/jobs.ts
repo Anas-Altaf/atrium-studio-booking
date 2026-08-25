@@ -38,12 +38,10 @@ export async function submitPendingCharges(
 }
 
 /**
- * One payment per transaction, because the call to the provider happens inside
- * it. Batching them meant a single transaction held its connection and its row
- * locks across twenty sequential HTTP calls.
+ * One payment per transaction, because the provider call happens inside it.
+ * Batching held one connection and its row locks across twenty HTTP calls.
  *
- * The lock is held across the call so two replicas do not both submit, but that
- * is an optimisation rather than the guarantee: the idempotency key travels
+ * The lock is an optimisation, not the guarantee: the idempotency key travels
  * with the row, so even a double submission returns the same charge.
  */
 async function submitOne(log: JobLogger): Promise<'submitted' | 'failed' | 'empty'> {
@@ -87,12 +85,8 @@ async function submitOne(log: JobLogger): Promise<'submitted' | 'failed' | 'empt
 }
 
 /**
- * Expires holds past their TTL, including those in PENDING_PAYMENT.
- *
- * Nothing expires by the passage of time: the exclusion constraint's WHERE
- * cannot reference now(), so a hold past its TTL keeps blocking its slot until
- * this moves it. Batched, so a backlog drains over several ticks rather than in
- * one statement.
+ * Nothing expires on its own: a hold past its TTL keeps blocking its slot until
+ * this moves it. Batched, so a backlog drains over several ticks.
  */
 export async function reapHolds(
   log: JobLogger = silent, limit = config.workerBatchSize,
@@ -230,13 +224,11 @@ async function apply(
 }
 
 /**
- * INV-4. The capture is real money either way, so it is recorded either way.
- * What varies is where it goes: a booking still in PENDING_PAYMENT is
- * confirmed, and one the reaper has already expired is refunded.
+ * INV-4. The capture is real money either way, so it is recorded either way;
+ * what varies is where it goes.
  *
- * The transition's own guard decides which. Reading the status and then acting
- * would leave a window for the reaper to run in between; the UPDATE either
- * matches PENDING_PAYMENT or it does not.
+ * The transition's own guard decides. Reading the status and then acting would
+ * leave a window for the reaper in between.
  */
 async function capture(
   tx: Tx, paymentId: string, bookingId: string, log: JobLogger,
@@ -269,8 +261,7 @@ async function refunded(tx: Tx, bookingId: string, log: JobLogger): Promise<void
   const booking = await bookingRepo.lockById(tx, bookingId);
   if (!booking) return;
 
-  // Both CANCELLED and EXPIRED reach REFUNDED in the matrix; which one this is
-  // depends on whether a customer cancelled or the hold ran out.
+  // Both CANCELLED and EXPIRED reach REFUNDED in the matrix.
   if (!await bookingRepo.transition(tx, bookingId, booking.status, 'REFUNDED')) {
     log.warn({ bookingId, status: booking.status }, 'refund settled on an unrefundable state');
   }

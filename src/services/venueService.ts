@@ -1,10 +1,7 @@
 /**
- * Publishing refund terms.
- *
- * Policy is data: an admin changes tiers through this endpoint and the change
- * is live with no deployment. It cannot reach a booking already made, because
- * every booking holds the version id in force when it was created and the
- * refund calculator reads through that (4B).
+ * Policy is data: tiers change through this endpoint with no deployment, and
+ * cannot reach a booking already made, because every booking holds the version
+ * in force when it was created (4B).
  */
 import { withTransaction } from '../db/pool.js';
 import { type AuthScope, isPlatformAdmin, isVenueAdmin } from '../auth/scope.js';
@@ -21,11 +18,10 @@ export interface PublishedPolicy {
 export async function publishPolicy(
   scope: AuthScope, venueId: string, tiers: RefundTier[],
 ): Promise<PublishedPolicy> {
-  // Two separate questions. Staff belong to a venue but may not change its
-  // pricing or policy, so membership alone is not authorisation to write.
+  // Membership and permission are separate questions: staff belong to a venue
+  // but may not change its pricing or policy.
   //
-  // 403 rather than 404: an admin knows their own venue exists, so there is
-  // nothing to conceal, and a 404 would read as a broken deployment.
+  // 403 rather than 404 — an admin knows their own venue exists.
   if (!isPlatformAdmin(scope)) {
     if (!isVenueAdmin(scope)) {
       throw forbidden('only a venue admin or platform admin may publish policy');
@@ -35,8 +31,7 @@ export async function publishPolicy(
     }
   }
 
-  // Highest threshold first, so a caller cannot change the outcome by
-  // reordering the array.
+  // So a caller cannot change the outcome by reordering the array.
   const ordered = [...tiers].sort((a, b) => b.hours_before - a.hours_before);
 
   return withTransaction({ actorId: scope.userId, reason: 'policy published' }, async (tx) => {

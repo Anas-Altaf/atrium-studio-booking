@@ -89,13 +89,3 @@ export async function settle(
   );
   return (rowCount ?? 0) > 0;
 }
-
-export async function findByProviderId(
-  tx: Tx, providerRefundId: string,
-): Promise<RefundRow | undefined> {
-  const { rows } = await tx.query<RefundRow>(
-    `SELECT ${COLUMNS} FROM refunds WHERE provider_refund_id = $1 FOR UPDATE`,
-    [providerRefundId],
-  );
-  return rows[0];
-}

@@ -78,15 +78,11 @@ export async function createHold(scope: AuthScope, req: HoldRequest): Promise<Bo
 }
 
 /**
- * Reaching the checkout screen.
+ * A hold expires after 8 minutes and a customer at checkout must have at least
+ * 10. Reaching checkout re-issues the hold, so the shorter TTL only governs
+ * holds abandoned before checkout (A1).
  *
- * The brief's two rules are incompatible as written: a hold expires after 8
- * minutes, and a customer at checkout must have at least 10. This is where they
- * are reconciled — arriving at checkout re-issues the hold, so the 8 minute TTL
- * only governs holds abandoned before checkout (A1).
- *
- * The trigger audits it as HELD -> HELD, so a slot held for an hour by repeated
- * checkouts is visible rather than silent.
+ * Audited as HELD -> HELD, so a slot held by repeated checkouts is visible.
  */
 export async function startCheckout(
   scope: AuthScope, bookingId: string,

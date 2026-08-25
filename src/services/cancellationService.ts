@@ -1,10 +1,7 @@
 /**
- * Cancelling, and what it returns.
- *
- * The cancellation is what is made idempotent, not the refund. CONFIRMED ->
- * CANCELLED serialises under the row lock and the state machine trigger, so
- * only one caller can perform it; the refund intent is written in the same
- * transaction, which means both commit or neither (4C).
+ * The cancellation is what is made idempotent, not the refund: CONFIRMED ->
+ * CANCELLED serialises under the row lock and the trigger, and the refund
+ * intent is written in the same transaction, so both commit or neither (4C).
  */
 import { withTransaction } from '../db/pool.js';
 import type { AuthScope } from '../auth/scope.js';

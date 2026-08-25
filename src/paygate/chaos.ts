@@ -1,5 +1,5 @@
-/** Rates are from the brief's chaos table. */
-export const RATES = {
+/** From the brief's chaos table. */
+const RATES = {
   duplicate: 0.30,
   race: 0.25,
   transient: 0.10,

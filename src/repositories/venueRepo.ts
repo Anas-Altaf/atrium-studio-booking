@@ -35,11 +35,9 @@ export async function operatingHours(venueId: string): Promise<OperatingHours | 
 }
 
 /**
- * The terms of one version.
- *
  * Read through the booking's own `policy_version_id`, never the venue's current
- * pointer — that is what stops a policy published today from reaching a booking
- * made last week (4B).
+ * pointer — that is what keeps a policy published today off a booking made last
+ * week (4B).
  */
 export async function tiersOf(tx: Tx, policyVersionId: string): Promise<RefundTier[]> {
   const { rows } = await tx.query<{ tiers: RefundTier[] }>(
@@ -50,12 +48,7 @@ export async function tiersOf(tx: Tx, policyVersionId: string): Promise<RefundTi
   return rows[0].tiers;
 }
 
-/**
- * Publishes new terms and points the venue at them.
- *
- * Versions are immutable — migration 008 rejects an UPDATE — so an edit is an
- * insert, and every booking already made keeps the version it referenced.
- */
+/** Versions are immutable (008 rejects an UPDATE), so an edit is an insert. */
 export async function publishPolicy(
   tx: Tx, venueId: string, tiers: RefundTier[],
 ): Promise<string> {

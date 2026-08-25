@@ -47,12 +47,9 @@ export async function insertLineItem(
 }
 
 /**
- * Worker: holds past their TTL.
- *
- * PENDING_PAYMENT as well as HELD — a hold that expires while payment is in
- * flight is the case INV-4 is about. Nothing expires by the passage of time:
- * the exclusion constraint's WHERE cannot reference now(), so a hold past its
- * TTL still blocks its slot until something moves it.
+ * PENDING_PAYMENT as well as HELD: a hold expiring while payment is in flight
+ * is the case INV-4 is about. Nothing expires on its own — the exclusion
+ * constraint's WHERE cannot reference now().
  */
 export async function claimExpired(tx: Tx, limit: number): Promise<BookingRow[]> {
   const { rows } = await tx.query<BookingRow>(
@@ -94,12 +91,7 @@ export async function transition(
   return (rowCount ?? 0) > 0;
 }
 
-/**
- * Pushes a hold's expiry out, which the trigger records as HELD -> HELD.
- *
- * `GREATEST` so re-entering checkout can only ever lengthen the window, never
- * cut short a hold that already has more time than the checkout allowance.
- */
+/** `GREATEST` so re-entering checkout can only lengthen the window. */
 export async function reissueHold(
   tx: Tx, id: string, minutes: number,
 ): Promise<Date | undefined> {
