@@ -46,8 +46,7 @@ A change that risks any of these must be stopped and flagged before code is writ
 
 ### Not built
 - CI (`.github` does not exist)
-- Frontend — the existing `web/` is a stale console and is being replaced
-- Redeploy — the live instance predates the console API
+- Redeploy — the live instance predates the console API and payment path
 
 ---
 

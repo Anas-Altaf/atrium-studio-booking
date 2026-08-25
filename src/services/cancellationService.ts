@@ -71,7 +71,19 @@ async function intendRefund(
   );
 
   const due = calculateRefund(tiers, booking.start_at, roomMinor, equipmentMinor);
-  if (due.totalMinor === 0) return undefined;
+
+  // Money was taken and none of it is coming back. That is an outcome, so it is
+  // written down: without a row, reconciliation sees a captured charge against a
+  // booking that did not happen and cannot tell policy from a lost refund.
+  if (due.totalMinor === 0) {
+    return refundRepo.nothingDue(tx, {
+      bookingId: booking.id,
+      paymentId,
+      reason: due.tier
+        ? `cancelled inside the ${due.tier.hours_before}h band, which refunds nothing`
+        : 'cancelled with no refund band in force',
+    });
+  }
 
   return refundRepo.intend(tx, {
     bookingId: booking.id,

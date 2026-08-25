@@ -27,6 +27,32 @@ export async function findLive(tx: Tx, bookingId: string): Promise<RefundRow | u
   return rows[0];
 }
 
+/**
+ * The decision to return nothing, recorded as a row.
+ *
+ * A cancellation under a 0% band is a policy outcome, not money going missing —
+ * but reconciliation cannot tell the two apart from a captured charge and an
+ * absent refund, so it flagged every one of them (INV-5 false positive).
+ * Writing the decision down makes it distinguishable.
+ *
+ * Created SUCCEEDED, not PENDING: `claimDue` only takes PENDING rows, and there
+ * is nothing here for the provider to move.
+ */
+export async function nothingDue(tx: Tx, refund: {
+  bookingId: string;
+  paymentId: string;
+  reason: string;
+}): Promise<RefundRow> {
+  const { rows } = await tx.query<RefundRow>(
+    `INSERT INTO refunds
+       (booking_id, payment_id, amount_minor, status, reason, idempotency_key)
+     VALUES ($1, $2, 0, 'SUCCEEDED', $3, gen_random_uuid())
+     RETURNING ${COLUMNS}`,
+    [refund.bookingId, refund.paymentId, refund.reason],
+  );
+  return rows[0]!;
+}
+
 /** The latest refund on a booking, FAILED included, for a detail page. */
 export async function latestForBooking(bookingId: string): Promise<RefundRow | undefined> {
   const rows = await query<RefundRow>(

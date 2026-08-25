@@ -13,7 +13,7 @@ docker compose up --build -d          # postgres + api-1/2/3 + nginx on :8080
 npm install
 npm run seed -- --profile=demo        # 8 venues, 60 rooms, 25,000 bookings
 npm run proof                         # 200-request concurrency proof
-npm test                              # isolation, error mapping, append-only
+npm test                              # 17 test files: state machine, isolation, payments, etc.
 ```
 
 **Stop the API replicas before `npm test`** — `docker compose stop api-1 api-2 api-3`.
@@ -75,8 +75,8 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 | Area | How I would have built it |
 |---|---|
 | **CI** | GitHub Actions: Postgres service, migrate, seed demo, `npm test`. Named in the scoring rubric and at zero. |
-| **Venue admin console, revenue report** | Tier 2. |
-| **Redeploy** | The live instance predates the payment path — it serves M1's code. |
+| **Redeploy** | The live instance predates the console API and payment path. |
+| **Tier 3** | Live heatmap, natural language booking, recurring bookings, waitlist, notifications. |
 
 ### Deployment shape
 

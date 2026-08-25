@@ -141,6 +141,24 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 4_000): Pr
   throw new Error('timed out');
 }
 
+/**
+ * `driveRefunds` claims the oldest due refunds first, a batch at a time, and it
+ * has no idea which one this test is waiting on. Earlier files and earlier runs
+ * leave PENDING refunds behind, so a single call can spend its whole batch on
+ * rows that are not ours and this test times out having proved nothing.
+ *
+ * Drive until this booking's own refund reaches the provider.
+ */
+async function driveUntilSubmitted(bookingId: string): Promise<void> {
+  await waitFor(async () => {
+    await driveRefunds();
+    const { rows } = await pool.query<{ provider_refund_id: string | null }>(
+      'SELECT provider_refund_id FROM refunds WHERE booking_id = $1', [bookingId],
+    );
+    return Boolean(rows[0]?.provider_refund_id);
+  }, 10_000);
+}
+
 const eventCount = async (chargeId: string): Promise<number> => Number(
   (await pool.query<{ n: string }>(
     'SELECT count(*)::text AS n FROM webhook_events WHERE charge_id = $1', [chargeId],
@@ -194,7 +212,7 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
     await waitFor(async () => (await eventCount(chargeId)) > 0);
     await processWebhooks();
 
-    await driveRefunds();
+    await driveUntilSubmitted(bookingId);
     await waitFor(async () => Number(
       (await pool.query<{ n: string }>(
         `SELECT count(*)::text AS n FROM webhook_events
@@ -225,7 +243,7 @@ describe('INV-4 — a capture on an expired hold refunds, never confirms', () =>
     await reapHolds();
     await waitFor(async () => (await eventCount(chargeId)) > 0);
     await processWebhooks();
-    await driveRefunds();
+    await driveUntilSubmitted(bookingId);
     await waitFor(async () => Number(
       (await pool.query<{ n: string }>(
         `SELECT count(*)::text AS n FROM webhook_events

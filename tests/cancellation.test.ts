@@ -187,13 +187,32 @@ describe('cancelling a confirmed booking', () => {
     expect((await refundOf(id))!.amount_minor).toBe(200_000);
   });
 
-  it('returns nothing inside two hours, and writes no refund row', async () => {
+  /**
+   * The venue keeps the money, and that decision is written down rather than
+   * left as an absence. Reconciliation cannot otherwise tell a policy outcome
+   * from a refund that went missing, and it flagged every one of these.
+   */
+  it('returns nothing inside two hours, and records that decision', async () => {
     const id = await confirmed(1);
 
     const res = await call('POST', `/bookings/${id}/cancel`, null, customerToken);
-    expect(res.body.refund).toBeNull();
-    expect(await refundOf(id)).toBeUndefined();
     expect(await statusOf(id)).toBe('CANCELLED');
+    expect((res.body.refund as { amountMinor: number }).amountMinor).toBe(0);
+
+    const refund = await refundOf(id);
+    expect(refund!.amount_minor).toBe(0);
+    // SUCCEEDED, not PENDING: the refund driver claims PENDING rows, and there
+    // is nothing here for the provider to move.
+    expect(refund!.status).toBe('SUCCEEDED');
+    expect(refund!.reason).toContain('refunds nothing');
+
+    // And that is what keeps INV-5 honest. Scoped to the fixture venue, so this
+    // asserts against this booking rather than whatever else the database holds.
+    const books = await call('GET', '/reports/reconciliation', null, adminToken);
+    expect(
+      (books.body.discrepancies as { detail: string }[])
+        .filter((d) => d.detail.includes(id)),
+    ).toEqual([]);
   });
 });
 
@@ -306,6 +325,9 @@ describe('policy is data', () => {
     const id = await confirmed(72);
     await call('POST', `/bookings/${id}/cancel`, null, customerToken);
 
-    expect(await refundOf(id)).toBeUndefined();
+    // Under the old tiers this was 72 hours out and would have refunded
+    // everything. Under the tiers published above it refunds nothing — recorded
+    // as a zero row rather than an absent one.
+    expect((await refundOf(id))!.amount_minor).toBe(0);
   });
 });
