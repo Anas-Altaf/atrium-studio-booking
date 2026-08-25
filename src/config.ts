@@ -1,5 +1,15 @@
+const port = Number(process.env.PORT ?? 3000);
+
+/**
+ * Mounts the mock provider inside this process. On the free tier a second
+ * service sleeps on its own schedule, so a reviewer returning after twenty
+ * minutes would find a provider that never calls back. Under compose it stays
+ * a separate service, which is the shape the brief describes.
+ */
+const paygateEmbedded = process.env.PAYGATE_EMBEDDED === 'on';
+
 export const config = {
-  port: Number(process.env.PORT ?? 3000),
+  port,
   host: process.env.HOST ?? '0.0.0.0',
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5432/atrium',
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-do-not-use-in-production',
@@ -10,8 +20,15 @@ export const config = {
   checkoutWindowMinutes: 10,
   instanceId: process.env.INSTANCE_ID ?? 'api-local',
 
-  paygateUrl: process.env.PAYGATE_URL ?? 'http://localhost:4000',
+  paygateEmbedded,
+  paygateChaos: process.env.PAYGATE_CHAOS === 'on',
   paygateSecret: process.env.PAYGATE_SECRET ?? 'paygate-dev-secret',
+  // Embedded, the loop never leaves the container: the worker calls this
+  // process and the callback comes back to it. No public hostname needed.
+  paygateUrl: process.env.PAYGATE_URL
+    ?? (paygateEmbedded ? `http://127.0.0.1:${port}` : 'http://localhost:4000'),
+  paygateCallbackUrl: process.env.PAYGATE_CALLBACK_URL
+    ?? `http://127.0.0.1:${port}/webhooks/paygate`,
 
   workerEnabled: process.env.WORKER_ENABLED !== 'false',
   workerIntervalMs: Number(process.env.WORKER_INTERVAL_MS ?? 1_000),

@@ -15,6 +15,7 @@ import { paymentRoutes } from './routes/payments.js';
 import { venueRoutes } from './routes/venues.js';
 import { reportRoutes } from './routes/reports.js';
 import { startWorker } from './worker/index.js';
+import { paygateRoutes } from './paygate/server.js';
 
 /** Bounded and printable. Anything else is replaced with a generated id. */
 const CORRELATION_ID = /^[A-Za-z0-9._:-]{8,128}$/;
@@ -69,6 +70,17 @@ export async function build() {
   await app.register(paymentRoutes);
   await app.register(venueRoutes);
   await app.register(reportRoutes);
+
+  // The provider, in this process, on hosting where a second service would
+  // sleep separately and stop calling back. Its endpoints are public here —
+  // it is a mock, no money moves, and the README says so.
+  if (config.paygateEmbedded) {
+    await app.register(paygateRoutes, {
+      secret: config.paygateSecret,
+      callbackUrl: config.paygateCallbackUrl,
+      chaos: config.paygateChaos,
+    });
+  }
 
   app.get('/health', async (_req, reply) => {
     const report = await healthService.check();

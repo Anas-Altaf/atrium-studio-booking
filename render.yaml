@@ -38,3 +38,19 @@ services:
         value: "5"
       - key: NODE_VERSION
         value: "20"
+      # The mock provider runs inside this process rather than as a second
+      # service. Two free services sleep on their own schedules, so a reviewer
+      # returning after twenty minutes would find a provider that never calls
+      # back and read it as a broken payment path. Under compose it stays a
+      # separate service, which is the shape the brief describes.
+      #
+      # Its endpoints are public here. It is a mock: no money moves, and no
+      # real provider is integrated.
+      - key: PAYGATE_EMBEDDED
+        value: "on"
+      - key: PAYGATE_CHAOS
+        value: "on"
+      - key: PAYGATE_SECRET
+        generateValue: true
+      # The worker calls this process and the callback comes back to it, so
+      # neither side needs to know the public hostname.

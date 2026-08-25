@@ -45,9 +45,20 @@ const refundBody = z.object({
   amount_minor: z.number().int().nonnegative(),
 });
 
+/**
+ * Its own service under compose, and mounted into the API process on the free
+ * tier, where a second service would sleep on its own schedule and stop calling
+ * back. Same routes either way.
+ */
 export function buildPaygate(opts: PaygateOptions): FastifyInstance {
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } });
+  void app.register(paygateRoutes, opts);
+  return app;
+}
 
+export async function paygateRoutes(
+  app: FastifyInstance, opts: PaygateOptions,
+): Promise<void> {
   const rand = seededRandom(opts.seed ?? 1_337);
   const scale = opts.timeScale ?? 1;
 
@@ -167,7 +178,8 @@ export function buildPaygate(opts: PaygateOptions): FastifyInstance {
     return charge;
   });
 
-  app.get('/health', async () => ({
+  // Namespaced, so mounting inside the API does not collide with its /health.
+  app.get('/paygate/health', async () => ({
     status: 'ok', chaos: opts.chaos, charges: chargesById.size, callback: opts.callbackUrl,
   }));
 
@@ -216,7 +228,6 @@ export function buildPaygate(opts: PaygateOptions): FastifyInstance {
     }
   }
 
-  return app;
 }
 
 export function sign(rawBody: string, secret: string): string {

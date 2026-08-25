@@ -78,6 +78,19 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 | **Venue admin console, revenue report** | Tier 2. |
 | **Redeploy** | The live instance predates the payment path — it serves M1's code. |
 
+### Deployment shape
+
+The mock provider runs **inside the API process** on Render, behind
+`PAYGATE_EMBEDDED=on`. Two free services sleep on their own schedules, so a
+second one would stop calling back and read as a broken payment path. Under
+compose it stays a separate service, which is the shape the brief describes and
+what the proof and soak run against.
+
+Two consequences, both real:
+
+- **`/paygate/*` is public on the deployed API.** It is a mock — no money moves and no real provider is integrated — but anyone can post a charge to it.
+- **A sleeping instance runs no worker.** After 15 minutes idle nothing expires holds, submits charges or drives refunds until a request wakes it. "Pay, then come back in ten minutes" does not work on the free tier, and cannot be made to.
+
 ### Real defects
 
 - **The test suite and the compose workers share a database.** `npm test` drives the worker jobs by hand; three replicas polling the same rows once a second claim them first, and the tests then fail in ways that look like logic errors. Stopping the replicas is the workaround. The fix is a database the tests own — not done.
