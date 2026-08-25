@@ -3,11 +3,11 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { ZodError } from 'zod';
 import { config } from './config.js';
-import { pool } from './db/pool.js';
 import { migrate } from './db/migrate.js';
 import { AppError } from './errors.js';
 import { authPlugin } from './auth/plugin.js';
-import { correlationPlugin } from './lib/logger.js';
+import { correlationPlugin } from './lib/correlation.js';
+import * as healthService from './services/healthService.js';
 import { authRoutes } from './routes/auth.js';
 import { bookingRoutes } from './routes/bookings.js';
 import { roomRoutes } from './routes/rooms.js';
@@ -80,30 +80,9 @@ export async function build() {
   await app.register(bookingRoutes);
   await app.register(roomRoutes);
 
-  /**
-   * A health check that means something: it asks the database a question
-   * rather than reporting that the process is running.
-   */
   app.get('/health', async (_req, reply) => {
-    try {
-      const { rows } = await pool.query('SELECT 1 AS ok');
-      const migrations = await pool.query<{ count: string }>(
-        'SELECT count(*)::text AS count FROM schema_migrations',
-      );
-      return {
-        status: 'ok',
-        instance: config.instanceId,
-        database: rows[0]?.ok === 1 ? 'reachable' : 'unexpected',
-        migrationsApplied: Number(migrations.rows[0]?.count ?? 0),
-      };
-    } catch (err) {
-      return reply.code(503).send({
-        status: 'degraded',
-        instance: config.instanceId,
-        database: 'unreachable',
-        error: (err as Error).message,
-      });
-    }
+    const report = await healthService.check();
+    return report.status === 'ok' ? report : reply.code(503).send(report);
   });
 
   return app;

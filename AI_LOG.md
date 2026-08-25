@@ -232,3 +232,51 @@ Two count bugs: per-venue figures multiplied up, and rows counted as written whe
 **Verdict:** MODIFIED.
 
 The driver was argued on autocannon lacking p95, which is true, and on k6 needing a binary install, which is not — it ships a Docker image, and the brief names k6. Three further errors: 409s counted as failed requests, hold latency averaged over 201s and 409s, and a first EXPLAIN pass that compared a cold plan against a warm one.
+
+---
+
+### 25. Three sessions without checking the layering rule
+**Delegated:** Evaluate the code structure against CLAUDE.md and the scoring rubric before building more of Tier 1.
+**Returned:** Five findings, all pre-existing, none of which it had raised while adding code on top of them.
+**Verdict:** REJECTED — the work was correct, the review that should have preceded it never happened.
+
+No service layer, though CLAUDE.md says routes → service → repository. Business
+rules — interval validation, pricing, capacity — inside `bookingRepo`. Raw SQL
+in the login route handler. No CI at all, which the DevOps line of the rubric
+names directly. It built Paygate and a benchmark without once reading its own
+instructions file against the tree.
+
+### 26. Layer restructure
+**Delegated:** Restructure to routes → service → repository with a domain layer, without breaking anything.
+**Returned:** `domain/` (pure), `services/` (transactions and orchestration), `repositories/` (SQL only), routes reduced to parse-call-respond.
+**Verdict:** ACCEPTED.
+
+Behaviour held: concurrency proof identical to the baseline taken first — Phase A
+1×201/199×409, Phase B 3×201/197×409, zero 5xx, all three replicas. Suite 36 → 61,
+the 25 new ones being domain rules that previously needed Postgres and an HTTP
+request to reach.
+
+One false alarm on the way: the proof failed with 502s after the rebuild. Same
+nginx stale-upstream cache as entry 18, not a regression. Confirmed by restarting
+the load balancer, not by assuming.
+
+Declined to introduce a row-to-response mapping layer. It is the right call once
+the two shapes need to differ; today it would rename every field on the wire and
+break the frontend for nothing. Recorded in `domain/types.ts` so it reads as a
+decision rather than an omission.
+
+---
+
+### 27. Cleanup after the restructure
+**Delegated:** Finish the job — the seven findings the structure review turned up.
+**Returned:** All seven. Proof and suite unchanged.
+**Verdict:** ACCEPTED.
+
+`assertVenueWritable` was not only dead, it was wrong: it returns false for a
+CUSTOMER, whose venue_id is null, and customers book anywhere. Had anything
+called it on the strength of its comment, it would have refused every customer
+booking. Deleted rather than kept for later.
+
+Found while fixing the room service: search applied its availability filter only
+when both `from` and `to` were present, so a request carrying one silently
+received rooms that are not free. A wrong answer under a 200.

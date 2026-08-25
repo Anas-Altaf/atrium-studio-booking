@@ -72,14 +72,25 @@ export function planFor(
 
   if (!enabled) return none;
 
+  const duplicate = rand() < RATES.duplicate;
+  const race = rand() < RATES.race;
+  const transient = rand() < RATES.transient;
+  const delayed = rand() < RATES.delayed;
+  const jitter = Math.floor(rand() * JITTER_MS);
+
   return {
-    duplicate: rand() < RATES.duplicate,
-    race: rand() < RATES.race,
-    transient: rand() < RATES.transient,
-    delayMs: rand() < RATES.delayed
-      ? DELAYED_MIN_MS + Math.floor(rand() * (DELAYED_MAX_MS - DELAYED_MIN_MS))
-      : Math.floor(rand() * JITTER_MS),
+    duplicate,
+    race,
+    transient,
     declined: false,
+    // A racing webhook is delivered immediately. Drawn independently, the
+    // jitter is 0-400ms against a response held back by 150, so the 202 won
+    // most of the races it was supposed to lose and the behaviour fired at well
+    // under the 25% the brief specifies. The long delay still wins over the
+    // race: a webhook 60 seconds late cannot also arrive early.
+    delayMs: delayed
+      ? DELAYED_MIN_MS + Math.floor(rand() * (DELAYED_MAX_MS - DELAYED_MIN_MS))
+      : race ? 0 : jitter,
   };
 }
 

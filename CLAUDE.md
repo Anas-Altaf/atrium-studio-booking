@@ -63,7 +63,7 @@ A change that risks any of these must be stopped and flagged before code is writ
 - **Stack:** TypeScript, Fastify, `node-postgres`. No ORM, no query builder — hand-written SQL in repositories, `.sql` migrations.
 - **Parameterized queries only.** `$1`, `$2`, `$3`. Never concatenate or template-interpolate user input into SQL — not in seeds, scripts, or any code path.
 - **Routes → service → repository.** No SQL in route handlers.
-- **Every repository method takes `AuthScope` as its first parameter.** No overload without it. The scope is the tenant isolation mechanism — a call that omits it doesn't compile.
+- **Any repository method that can return a row the caller has not already proved access to takes `AuthScope` as its first parameter**, and turns it into a predicate the query carries. The rest take an explicit `venue_id` the calling service got from a scoped read, so they cannot widen reach. Two exceptions: `userRepo.findByEmail` (runs before the caller has an identity) and `systemRepo` (no tenant data). Adding a repository read that takes neither is an INV-6 hole — INV-6 is a hard cap.
 - **Database errors translate at the repository boundary.** Postgres error codes never leak as raw exceptions. `translatePgError()` in `errors.ts`.
 - **Transactions through `withTransaction()`.** It sets `SET LOCAL atrium.actor_id` and `atrium.reason`, retries `40P01` deadlocks once, translates surviving contention to 409.
 - **Lock equipment types in sorted id order** before inserting a booking. Two holds on the same types in opposite order deadlock.

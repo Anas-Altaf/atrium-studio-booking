@@ -231,7 +231,13 @@ The problem: Paygate delivers webhooks at-least-once, potentially out of order, 
 
 ## 4A. Tenant isolation (INV-6)
 
-Every repository method takes an `AuthScope` as its first parameter. No overload without it — omitting the scope doesn't compile. The scope carries the caller's role, user_id, and venue_id. The repository derives the predicate: `venue_id = $1` for venue-scoped roles, `user_id = $1` for CUSTOMER, unrestricted for PLATFORM_ADMIN.
+Every repository method that can return a row the caller has not already proved access to takes an `AuthScope` as its first parameter, and turns it into a predicate the query carries: `venue_id = $1` for venue-scoped roles, `user_id = $1` for CUSTOMER on their own bookings, unrestricted for PLATFORM_ADMIN. The predicate is derived from the scope, not chosen by the caller.
+
+The rest take an explicit `venue_id` that the calling service obtained from a scoped read — `lockTypes`, `localWindow`, `insertHold`. They cannot widen what the caller may reach, because the venue is already fixed by the time they run.
+
+Two exceptions, both deliberate. `userRepo.findByEmail` runs before the caller has an identity and is the only function in its file for that reason. `systemRepo` reads no tenant data.
+
+An earlier version of this section claimed every repository method took a scope. When the layers were split it stopped being true of `roomRepo.findForBooking`, which read any venue's room and left the check to the one service that happened to perform it — INV-6 is a hard cap, and it had come to depend on every future caller remembering. The predicate is in the query now.
 
 I chose this over Postgres RLS because RLS has a pooling problem: a session variable left set on a returned connection serves the next request under the previous tenant's scope. That's a new isolation failure created by the isolation mechanism, and INV-6 is a scoring hard cap. RLS also needs bypasses for PLATFORM_ADMIN and the unscoped workers, plus two policies per table because CUSTOMER scopes by user_id rather than venue_id. RLS is the right next step but repository scoping is the right choice here.
 

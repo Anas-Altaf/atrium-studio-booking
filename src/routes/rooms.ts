@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { searchRooms } from '../repositories/roomRepo.js';
+import * as roomService from '../services/roomService.js';
 
 const csv = z.string().transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean));
 
@@ -16,7 +16,7 @@ const searchQuery = z.object({
 
 export async function roomRoutes(app: FastifyInstance): Promise<void> {
   app.get('/rooms', { onRequest: [app.authenticate] }, async (req) => {
-    const q = searchQuery.parse(req.query);
-    return searchRooms(req.scope, q);
+    const criteria = searchQuery.parse(req.query);
+    return roomService.search(req.scope, criteria);
   });
 }

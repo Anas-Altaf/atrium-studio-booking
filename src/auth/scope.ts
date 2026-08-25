@@ -21,6 +21,28 @@ export const isPlatformAdmin = (s: AuthScope) => s.role === 'PLATFORM_ADMIN';
 export const isVenueScoped = (s: AuthScope) =>
   s.role === 'VENUE_STAFF' || s.role === 'VENUE_ADMIN';
 
+export interface Predicate { sql: string; params: unknown[] }
+
+/**
+ * For tables that belong to a venue but not to a user — rooms, equipment.
+ *
+ *   PLATFORM_ADMIN  unrestricted
+ *   VENUE_*         rows of their venue
+ *   CUSTOMER        unrestricted, because booking across venues is the product
+ *
+ * A customer is not "unscoped" here by omission. Rooms are the catalogue; the
+ * cross-venue search exists so a customer can see all of them. What a customer
+ * is scoped on is their own bookings, which `scopePredicate` handles.
+ */
+export function venuePredicate(
+  scope: AuthScope, venueCol: string, nextParamIndex: number,
+): Predicate {
+  if (isVenueScoped(scope)) {
+    return { sql: `${venueCol} = $${nextParamIndex}`, params: [scope.venueId] };
+  }
+  return { sql: 'TRUE', params: [] };
+}
+
 /**
  * The predicate a repository appends, derived from the scope rather than
  * chosen by the caller.
@@ -36,19 +58,10 @@ export function scopePredicate(
   scope: AuthScope,
   cols: { venue: string; user: string },
   nextParamIndex: number,
-): { sql: string; params: unknown[] } {
+): Predicate {
   if (isPlatformAdmin(scope)) return { sql: 'TRUE', params: [] };
   if (isVenueScoped(scope)) {
     return { sql: `${cols.venue} = $${nextParamIndex}`, params: [scope.venueId] };
   }
   return { sql: `${cols.user} = $${nextParamIndex}`, params: [scope.userId] };
-}
-
-/**
- * Whether this scope may act on a given venue at all. Checked before any read,
- * so a request for another venue's resource never reaches SQL.
- */
-export function assertVenueWritable(scope: AuthScope, venueId: string): boolean {
-  if (isPlatformAdmin(scope)) return true;
-  return scope.venueId === venueId;
 }
