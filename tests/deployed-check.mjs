@@ -1,11 +1,5 @@
 /**
- * Smoke test against a DEPLOYED instance. Not part of Unknown command: "test"
-
-
-Did you mean this?
-  npm test # Test a package
-To see a list of supported npm commands, run:
-  npm help -- that runs
+ * Smoke test against a DEPLOYED instance. Not part of `npm test`, which runs
  * in process against a local database. This one goes over the wire, so it also
  * exercises the things only a real deployment has: TLS to Neon, nginx or
  * Render's proxy in front, and a cold start.

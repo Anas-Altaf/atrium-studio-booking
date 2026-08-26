@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API — migrate, seed, test
+    runs-on: ubuntu-latest
+
+    # The tests run against a real Postgres on purpose. The risky logic here is
+    # an exclusion constraint, a trigger and a partial unique index; a mocked
+    # database would test the mock rather than the invariant.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: atrium
+          POSTGRES_PASSWORD: atrium
+          POSTGRES_DB: atrium
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U atrium -d atrium"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgres://atrium:atrium@localhost:5432/atrium
+      # No worker in CI: the tests drive the jobs by hand, and a loop polling
+      # underneath them would claim the very rows a test is about to assert on.
+      WORKER_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Migrate
+        run: npm run migrate
+
+      - name: Seed
+        run: npm run seed -- --profile=demo
+
+      - name: Test
+        run: npm test
+
+  web:
+    name: Web — typecheck, test, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Covers the slot arithmetic the client re-implements from the server's
+      # rules. If the two drift, the UI offers slots the hold endpoint rejects.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+
+  proof:
+    name: Concurrency proof — three replicas behind nginx
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # The hard cap the brief names first. Runs against the compose stack it is
+      # specified for — three API replicas behind a load balancer — because a
+      # correctness strategy that only holds in one process is not one.
+      - name: Stand up the stack
+        run: docker compose up -d --build --wait
+
+      - name: Seed
+        run: npm run seed -- --profile=demo
+        env:
+          DATABASE_URL: postgres://atrium:atrium@localhost:5432/atrium
+
+      - name: 200 concurrent holds, one room, one slot
+        run: npm run proof
+
+      # `bench/soak.mjs` is deliberately not a gate here. It settles on the
+      # system's own clock — an 8 minute hold TTL plus the provider's 60 to 90
+      # second delayed delivery — so a CI-sized window reports "still moving"
+      # for a system that is behaving correctly. INV-3, INV-4 and INV-5 are
+      # covered deterministically by tests/chaos.test.ts with forced behaviour;
+      # the soak is evidence run locally and recorded in README.md.
+
+      # The same smoke test used against Render, pointed at the compose stack:
+      # it goes over the wire through nginx rather than in process.
+      - name: End to end over the wire
+        run: node tests/deployed-check.mjs
+        env:
+          API_BASE_URL: http://localhost:8080
+
+      - name: API logs on failure
+        if: failure()
+        run: docker compose logs --tail=200

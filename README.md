@@ -47,6 +47,26 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 
 `docker compose up` stands up **three API replicas behind nginx** on `:8080`.
 
+## CI
+
+`.github/workflows/ci.yml`, on every push to `main` and every pull request.
+Three jobs, run in parallel:
+
+| Job | What it proves |
+|---|---|
+| **API** | Typecheck, migrate, seed demo, the full suite against a real Postgres service |
+| **Web** | Typecheck, the slot-derivation tests, a production Next build |
+| **Proof** | `docker compose up` inside the runner, then the 200-request concurrency proof against three replicas behind nginx, then the deployed smoke test over the wire |
+
+The concurrency proof is a gate, not a report: it is the first hard cap in the
+brief, so a change that double-books cannot reach `main` green.
+
+`bench/soak.mjs` is deliberately **not** a gate. It settles on the system's own
+clock — an 8 minute hold TTL plus the provider's 60 to 90 second delayed
+delivery — so a CI-sized window reports "still moving" for a system that is
+behaving correctly. INV-3, INV-4 and INV-5 are gated deterministically by
+`tests/chaos.test.ts`, which forces each behaviour rather than waiting for it.
+
 ---
 
 ## Deployed
@@ -74,9 +94,8 @@ Results and machine spec in [LOAD_TEST.md](./LOAD_TEST.md).
 
 | Area | How I would have built it |
 |---|---|
-| **CI** | GitHub Actions: Postgres service, migrate, seed demo, `npm test`. Named in the scoring rubric and at zero. |
-| **Redeploy** | The live instance predates the console API and payment path. |
-| **Tier 3** | Live heatmap, natural language booking, recurring bookings, waitlist, notifications. |
+| **Tier 3** | Live heatmap, natural language booking, recurring bookings, waitlist, notifications. Deliberate: the brief says a beautiful calendar over a race condition scores below plain and correct. |
+| **A database the tests own** | See Real defects. The workaround is documented; the fix is not built. |
 
 ### Deployment shape
 
