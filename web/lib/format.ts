@@ -28,6 +28,10 @@ export function moneyShort(minor: number): string {
  * browser's zone would show a London customer a Karachi booking at the wrong
  * hour and nothing on screen would say so.
  */
+/**
+ * `hourCycle: "h23"` everywhere a clock is drawn, never `hour12: false`. The
+ * latter selects h24 on some ICU builds, where midnight reads "24:00".
+ */
 export function venueTime(iso: string, timezone?: string): string {
   const d = new Date(iso);
   const opts: Intl.DateTimeFormatOptions = {
@@ -35,7 +39,7 @@ export function venueTime(iso: string, timezone?: string): string {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    hourCycle: "h23",
   };
   if (timezone) {
     opts.timeZone = timezone;
@@ -58,7 +62,7 @@ export function clockOnly(iso: string, timezone?: string): string {
   return new Intl.DateTimeFormat("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    hourCycle: "h23",
     ...(timezone ? { timeZone: timezone } : {}),
   }).format(new Date(iso));
 }

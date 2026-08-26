@@ -51,6 +51,25 @@ describe("freeSlots", () => {
     expect(slots.at(-1)!.startAt).toBe("2026-03-11T16:00:00.000Z");
   });
 
+  /**
+   * Engine-independent, unlike the timestamps above.
+   *
+   * The offset from a local wall clock back to an instant is read out of
+   * `Intl`, and an ICU build that formats midnight as "24" rather than "00"
+   * shifts every slot a full day. That passed on one machine and failed on
+   * another; this pins the contract instead of the arithmetic.
+   */
+  it("never returns a slot outside the requested window", () => {
+    const [from, to] = [Date.parse(day(10)), Date.parse(day(11))];
+    const slots = run();
+
+    expect(slots.length).toBeGreaterThan(0);
+    for (const slot of slots) {
+      expect(Date.parse(slot.startAt)).toBeGreaterThanOrEqual(from);
+      expect(Date.parse(slot.startAt)).toBeLessThan(to);
+    }
+  });
+
   it("never offers a start outside the venue's hours", () => {
     const outside = run().filter((s) => {
       const hour = new Date(s.startAt).getUTCHours();

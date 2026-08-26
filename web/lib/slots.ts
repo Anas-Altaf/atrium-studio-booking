@@ -38,13 +38,19 @@ function localInstant(at: Date, hhmm: string, timezone: string): number {
   const [h, m] = hhmm.split(":").map(Number);
   // Resolve the day's own UTC offset by comparing the formatted local time back
   // to the instant, rather than assuming a fixed offset — London has two.
+  //
+  // `hourCycle: "h23"`, not `hour12: false`. The latter selects h24 in en-US on
+  // some ICU builds, where midnight formats as "24" rather than "00" — which
+  // reads here as a 24 hour offset and moves every slot a day earlier. It is
+  // engine-dependent, so it passed locally and failed in CI.
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    hourCycle: "h23",
   }).formatToParts(at);
-  const lh = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  // % 24 so an engine that ignores the hour cycle still cannot shift a day.
+  const lh = Number(parts.find((p) => p.type === "hour")?.value ?? 0) % 24;
   const lm = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
 
   const localNow = lh * 60 + lm;
